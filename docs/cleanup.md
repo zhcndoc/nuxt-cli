@@ -1,8 +1,8 @@
 ---
 title: 'nuxt cleanup'
-description: 'Remove common generated Nuxt files and caches.'
+description: '移除常见的生成 Nuxt 文件和缓存。'
 links:
-  - label: Source
+  - label: 来源
     icon: i-simple-icons-github
     to: https://github.com/nuxt/cli/blob/main/packages/nuxt-cli/src/commands/cleanup.ts
     size: xs
@@ -14,26 +14,26 @@ npx nuxt cleanup [ROOTDIR] [--cwd=<directory>]
 ```
 <!--/cleanup-cmd-->
 
-The `cleanup` command removes common generated Nuxt files and caches, including:
+`cleanup` 命令会移除常见的生成 Nuxt 文件和缓存，包括：
 
-- your build directory, which is `.nuxt` unless [`buildDir`](/docs/api/nuxt-config#builddir) says otherwise
+- 你的构建目录，除非 [`buildDir`](/docs/api/nuxt-config#builddir) 另有说明，否则为 `.nuxt`
 - `.output`
 - `dist`
 - `node_modules/.vite`
 - `node_modules/.cache`
 
-## Arguments
+## 参数
 
 <!--cleanup-args-->
-| Argument  | Description                                          |
-|-----------|------------------------------------------------------|
-| `ROOTDIR` | The root directory of your Nuxt project (default: .) |
+| 参数      | 描述                                               |
+|-----------|----------------------------------------------------|
+| `ROOTDIR` | Nuxt 项目的根目录（默认：.）                       |
 <!--/cleanup-args-->
 
-## Options
+## 选项
 
 <!--cleanup-opts-->
-| Option              | Default | Description                                     |
-|---------------------|---------|-------------------------------------------------|
-| `--cwd=<directory>` |         | Specify the root directory of your Nuxt project |
+| 选项                | 默认值 | 描述                                  |
+|---------------------|---------|---------------------------------------|
+| `--cwd=<directory>` |         | 指定 Nuxt 项目的根目录                |
 <!--/cleanup-opts-->

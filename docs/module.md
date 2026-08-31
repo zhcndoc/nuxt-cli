@@ -1,14 +1,14 @@
 ---
 title: "nuxt module"
-description: "Search, add and remove modules in your Nuxt application with the command line."
+description: "使用命令行在 Nuxt 应用中搜索、添加和移除模块。"
 links:
-  - label: Source
+  - label: 来源
     icon: i-simple-icons-github
     to: https://github.com/nuxt/cli/tree/main/packages/nuxt-cli/src/commands/module
     size: xs
 ---
 
-Nuxt provides a few utilities to work with [Nuxt modules](/modules) seamlessly.
+Nuxt 提供了一些实用工具，可无缝处理 [Nuxt modules](/modules)。
 
 ## `nuxt module add`
 
@@ -18,47 +18,47 @@ npx nuxt module add <MODULENAME...> [--cwd=<directory>] [--logLevel=<silent|info
 ```
 <!--/module-add-cmd-->
 
-### Arguments
+### 参数
 
 <!--module-add-args-->
-| Argument        | Description                                                         |
-|-----------------|---------------------------------------------------------------------|
-| `MODULENAME...` | Specify one or more modules to install by name, separated by spaces |
+| 参数            | 描述                                               |
+|-----------------|----------------------------------------------------|
+| `MODULENAME...` | 指定要按名称安装的一个或多个模块，以空格分隔       |
 <!--/module-add-args-->
 
-### Options
+### 选项
 
 <!--module-add-opts-->
-| Option                                                     | Default | Description                                     |
-|------------------------------------------------------------|---------|-------------------------------------------------|
-| `--cwd=<directory>`                                        | `.`     | Specify the root directory of your Nuxt project |
-| `--logLevel=<silent\|info\|verbose>`                       |         | Specify build-time log level                    |
-| `--skipInstall`                                            |         | Skip npm install                                |
-| `--skipConfig`                                             |         | Skip nuxt.config.ts update                      |
-| `--dev`                                                    |         | Install modules as dev dependencies             |
-| `--packageManager=<npm\|pnpm\|yarn\|bun\|deno\|aube\|nub>` |         | Package manager to install with                 |
+| 选项                                                       | 默认值 | 描述                                     |
+|------------------------------------------------------------|---------|------------------------------------------|
+| `--cwd=<directory>`                                        | `.`     | 指定 Nuxt 项目的根目录                   |
+| `--logLevel=<silent\|info\|verbose>`                       |         | 指定构建时日志级别                       |
+| `--skipInstall`                                            |         | 跳过 npm 安装                            |
+| `--skipConfig`                                             |         | 跳过 nuxt.config.ts 更新                  |
+| `--dev`                                                    |         | 将模块作为开发依赖安装                   |
+| `--packageManager=<npm\|pnpm\|yarn\|bun\|deno\|aube\|nub>` |         | 用于安装的软件包管理器                   |
 <!--/module-add-opts-->
 
-The command lets you install [Nuxt modules](/modules) in your application with no manual work.
+该命令可让你无需手动操作即可在应用中安装 [Nuxt modules](/modules)。
 
-When running the command, it will:
+运行命令时，它将：
 
-- install the module as a dependency using your package manager
-- add it to your [package.json](/docs/directory-structure/package) file
-- update your [`nuxt.config`](/docs/directory-structure/nuxt-config) file
+- 使用你的软件包管理器将模块安装为依赖项
+- 将其添加到你的 [package.json](/docs/directory-structure/package) 文件中
+- 更新你的 [`nuxt.config`](/docs/directory-structure/nuxt-config) 文件
 
-**Example:**
+**示例：**
 
-Installing the [`Pinia`](/modules/pinia) module
+安装 [`Pinia`](/modules/pinia) 模块
 
 ```bash [Terminal]
 npx nuxt module add pinia
 ```
 
-Run it without a module name to pick from the modules compatible with your Nuxt version.
+不指定模块名称运行该命令，即可从与你的 Nuxt 版本兼容的模块中进行选择。
 
 ::note
-[`nuxt add`](/docs/api/commands/add) is the same command, and also accepts layers.
+[`nuxt add`](/docs/api/commands/add) 是相同的命令，同时也接受层。
 ::
 
 ## `nuxt module remove`
@@ -69,34 +69,34 @@ npx nuxt module remove [MODULENAME...] [--cwd=<directory>] [--logLevel=<silent|i
 ```
 <!--/module-remove-cmd-->
 
-### Arguments
+### 参数
 
 <!--module-remove-args-->
-| Argument        | Description                                                        |
-|-----------------|--------------------------------------------------------------------|
-| `MODULENAME...` | Specify one or more modules to remove by name, separated by spaces |
+| 参数            | 描述                                               |
+|-----------------|----------------------------------------------------|
+| `MODULENAME...` | 指定要按名称移除的一个或多个模块，以空格分隔       |
 <!--/module-remove-args-->
 
-### Options
+### 选项
 
 <!--module-remove-opts-->
-| Option                               | Default | Description                                     |
-|--------------------------------------|---------|-------------------------------------------------|
-| `--cwd=<directory>`                  | `.`     | Specify the root directory of your Nuxt project |
-| `--logLevel=<silent\|info\|verbose>` |         | Specify build-time log level                    |
-| `--skipInstall`                      |         | Skip dependency uninstall                       |
-| `--skipConfig`                       |         | Skip nuxt.config.ts update                      |
+| 选项                               | 默认值 | 描述                                     |
+|--------------------------------------|---------|------------------------------------------|
+| `--cwd=<directory>`                  | `.`     | 指定 Nuxt 项目的根目录                   |
+| `--logLevel=<silent\|info\|verbose>` |         | 指定构建时日志级别                       |
+| `--skipInstall`                      |         | 跳过依赖卸载                             |
+| `--skipConfig`                       |         | 跳过 nuxt.config.ts 更新                  |
 <!--/module-remove-opts-->
 
-The command uninstalls the package and removes it from the `modules` array in your [`nuxt.config`](/docs/directory-structure/nuxt-config).
+该命令会卸载软件包，并将其从你的 [`nuxt.config`](/docs/directory-structure/nuxt-config) 中的 `modules` 数组移除。
 
-**Example:**
+**示例：**
 
 ```bash [Terminal]
 npx nuxt module remove pinia
 ```
 
-Run it without a module name to pick from the modules the project currently uses.
+不指定模块名称运行该命令，即可从项目当前使用的模块中进行选择。
 
 ## `nuxt module search`
 
@@ -108,30 +108,30 @@ npx nuxt module search <QUERY> [--cwd=<directory>] [--nuxtVersion=<3|4|4.2.0>] [
 
 ![nuxt module search](/capture/output/nuxt-module-search.svg)
 
-### Arguments
+### 参数
 
 <!--module-search-args-->
-| Argument | Description            |
-|----------|------------------------|
-| `QUERY`  | keywords to search for |
+| 参数    | 描述             |
+|---------|------------------|
+| `QUERY` | 要搜索的关键词   |
 <!--/module-search-args-->
 
-### Options
+### 选项
 
 <!--module-search-opts-->
-| Option                        | Default | Description                                                                        |
-|-------------------------------|---------|------------------------------------------------------------------------------------|
-| `--cwd=<directory>`           | `.`     | Specify the root directory of your Nuxt project                                    |
-| `--nuxtVersion=<3\|4\|4.2.0>` |         | Filter by Nuxt version and list compatible modules only (auto detected by default) |
-| `--json`                      |         | Print output as JSON                                                               |
+| 选项                         | 默认值 | 描述                                                                               |
+|------------------------------|---------|------------------------------------------------------------------------------------|
+| `--cwd=<directory>`          | `.`     | 指定 Nuxt 项目的根目录                                                             |
+| `--nuxtVersion=<3\|4\|4.2.0>` |         | 按 Nuxt 版本筛选，仅列出兼容的模块（默认自动检测）                                |
+| `--json`                     |         | 以 JSON 格式输出结果                                                               |
 <!--/module-search-opts-->
 
-The command searches for Nuxt modules matching your query that are compatible with your Nuxt version, showing each module's description with the matched text highlighted.
+该命令会搜索与你的查询匹配且兼容你的 Nuxt 版本的 Nuxt modules，并显示每个模块的描述，同时突出显示匹配的文本。
 
-**Example:**
+**示例：**
 
 ```bash [Terminal]
 npx nuxt module search pinia
 ```
 
-Use `--json` to get the results as machine-readable JSON.
+使用 `--json` 可获取机器可读的 JSON 格式结果。

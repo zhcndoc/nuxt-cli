@@ -1,8 +1,8 @@
 ---
 title: "nuxt test"
-description: The test command runs tests using @nuxt/test-utils.
+description: test 命令使用 @nuxt/test-utils 运行测试
 links:
-  - label: Source
+  - label: 来源
     icon: i-simple-icons-github
     to: https://github.com/nuxt/cli/blob/main/packages/nuxt-cli/src/commands/test.ts
     size: xs
@@ -14,26 +14,26 @@ npx nuxt test [ROOTDIR] [--cwd=<directory>] [--dev] [--watch]
 ```
 <!--/test-cmd-->
 
-The `test` command runs tests using [`@nuxt/test-utils`](/docs/getting-started/testing). This command sets `process.env.NODE_ENV` to `test` if not already set.
+`test` 命令使用 [`@nuxt/test-utils`](/docs/getting-started/testing) 运行测试。如果尚未设置，此命令会将 `process.env.NODE_ENV` 设置为 `test`。
 
-## Arguments
+## 参数
 
 <!--test-args-->
-| Argument  | Description                                          |
-|-----------|------------------------------------------------------|
-| `ROOTDIR` | The root directory of your Nuxt project (default: .) |
+| 参数       | 描述                                  |
+|------------|---------------------------------------|
+| `ROOTDIR`  | Nuxt 项目的根目录（默认值：.）        |
 <!--/test-args-->
 
-## Options
+## 选项
 
 <!--test-opts-->
-| Option              | Default | Description                                     |
-|---------------------|---------|-------------------------------------------------|
-| `--cwd=<directory>` |         | Specify the root directory of your Nuxt project |
-| `--dev`             |         | Run in dev mode                                 |
-| `--watch`           |         | Watch mode                                      |
+| 选项                | 默认值 | 描述                     |
+|---------------------|--------|--------------------------|
+| `--cwd=<directory>` |        | 指定 Nuxt 项目的根目录   |
+| `--dev`             |        | 以开发模式运行           |
+| `--watch`           |        | 监视模式                 |
 <!--/test-opts-->
 
 ::note
-This command sets `process.env.NODE_ENV` to `test`.
-::
+此命令会将 `process.env.NODE_ENV` 设置为 `test`。
+:::

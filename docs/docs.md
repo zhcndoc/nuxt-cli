@@ -1,8 +1,8 @@
 ---
-title: "nuxt docs"
-description: The docs command searches the Nuxt documentation for the version your project uses.
+title: "nuxt 文档"
+description: docs 命令会搜索与你的项目所使用版本对应的 Nuxt 文档
 links:
-  - label: Source
+  - label: 来源
     icon: i-simple-icons-github
     to: https://github.com/nuxt/cli/blob/main/packages/nuxt-cli/src/commands/docs.ts
     size: xs
@@ -14,30 +14,30 @@ npx nuxt docs [QUERY] [--cwd=<directory>] [--open]
 ```
 <!--/docs-cmd-->
 
-The `docs` command searches the Nuxt documentation and opens the best match in your browser. Without a query it opens the documentation home page.
+`docs` 命令会搜索 Nuxt 文档，并在浏览器中打开最佳匹配结果。不提供查询时，它会打开文档主页。
 
-## Arguments
+## 参数
 
 <!--docs-args-->
-| Argument | Description                           |
-|----------|---------------------------------------|
-| `QUERY`  | Words to search the documentation for |
+| 参数      | 描述             |
+|-----------|------------------|
+| `QUERY`   | 用于搜索文档的词语 |
 <!--/docs-args-->
 
-## Options
+## 选项
 
 <!--docs-opts-->
-| Option              | Default | Description                                        |
-|---------------------|---------|----------------------------------------------------|
-| `--cwd=<directory>` | `.`     | Specify the root directory of your Nuxt project    |
-| `--open`            | `true`  | Open the best match in a browser                   |
-| `--no-open`         |         | Print the matching pages without opening a browser |
+| 选项                | 默认值 | 描述                             |
+|---------------------|--------|----------------------------------|
+| `--cwd=<directory>` | `.`    | 指定 Nuxt 项目的根目录           |
+| `--open`            | `true` | 在浏览器中打开最佳匹配结果       |
+| `--no-open`         |        | 打印匹配页面而不打开浏览器       |
 <!--/docs-opts-->
 
-Results are ranked by page title, then by section heading, then by description, and the matches are printed before the best one is opened. When several pages match and the terminal is interactive, you are asked which one to open.
+结果会依次按照页面标题、章节标题和描述进行排名，并且会在打开最佳结果之前打印匹配结果。当有多个页面匹配且终端处于交互模式时，系统会询问你要打开哪一个。
 
 ```bash [Terminal]
 npx nuxt docs "server routes"
 ```
 
-The search runs against the documentation for the Nuxt version the project depends on rather than whatever is currently published, so the answers match the version you are using. `@nuxt/docs` is used when it is installed in the project, and downloaded otherwise.
+搜索针对的是项目所依赖的 Nuxt 版本对应的文档，而不是当前发布的版本，因此得到的答案与你正在使用的版本相匹配。项目中安装了 `@nuxt/docs` 时会使用它，否则会下载该包。

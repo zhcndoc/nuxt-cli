@@ -1,8 +1,8 @@
 ---
 title: "nuxt add-template"
-description: "Scaffold an entity into your Nuxt application."
+description: "在 Nuxt 应用中构建实体脚手架"
 links:
-  - label: Source
+  - label: 来源
     icon: i-simple-icons-github
     to: https://github.com/nuxt/cli/blob/main/packages/nuxt-cli/src/commands/add-template.ts
     size: xs
@@ -14,52 +14,52 @@ npx nuxt add-template <TEMPLATE> <NAME> [--cwd=<directory>] [--logLevel=<silent|
 ```
 <!--/add-template-cmd-->
 
-The `add-template` command scaffolds a file into the right directory for your project's structure. It replaces `nuxt add <template> <name>`, which still runs but is deprecated.
+`add-template` 命令会根据项目结构，在正确的目录中构建文件脚手架。它取代了 `nuxt add <template> <name>`，后者仍可运行，但已被弃用。
 
 ::read-more{to="/docs/api/commands/add"}
-Read more about `nuxt add`, which adds modules and layers to your application.
+详细了解 `nuxt add`，它可以向你的应用添加模块和层。
 ::
 
-## Arguments
+## 参数
 
 <!--add-template-args-->
 | Argument                                                                                                                                                                      | Description                        |
 |-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------|
-| `TEMPLATE=<api\|app\|app-config\|component\|composable\|error\|layer\|layout\|middleware\|module\|page\|plugin\|server-middleware\|server-plugin\|server-route\|server-util>` | Specify which template to generate |
-| `NAME`                                                                                                                                                                        | Specify name of the generated file |
+| `TEMPLATE=<api\|app\|app-config\|component\|composable\|error\|layer\|layout\|middleware\|module\|page\|plugin\|server-middleware\|server-plugin\|server-route\|server-util>` | 指定要生成的模板 |
+| `NAME`                                                                                                                                                                        | 指定生成文件的名称 |
 <!--/add-template-args-->
 
-## Options
+## 选项
 
 <!--add-template-opts-->
 | Option                                                                    | Default | Description                                            |
 |---------------------------------------------------------------------------|---------|--------------------------------------------------------|
-| `--cwd=<directory>`                                                       | `.`     | Specify the root directory of your Nuxt project        |
-| `--logLevel=<silent\|info\|verbose>`                                      |         | Specify build-time log level                           |
-| `--force`                                                                 | `false` | Overwrite the file if it already exists                |
-| `--mode=<client\|server>`                                                 |         | Add a client or server suffix to a component or plugin |
-| `--method=<connect\|delete\|get\|head\|options\|patch\|post\|put\|trace>` |         | Add an HTTP method suffix to an API route              |
-| `--global`                                                                |         | Create global route middleware                         |
-| `--api`                                                                   |         | Create a server route in the API directory             |
-| `--pages`                                                                 |         | Include NuxtPage and NuxtLayout in the app template    |
-| `--client`                                                                |         | Shorthand for `--mode client`                          |
-| `--server`                                                                |         | Shorthand for `--mode server`                          |
-| `--connect`                                                               |         | Shorthand for `--method connect`                       |
-| `--delete`                                                                |         | Shorthand for `--method delete`                        |
-| `--get`                                                                   |         | Shorthand for `--method get`                           |
-| `--head`                                                                  |         | Shorthand for `--method head`                          |
-| `--options`                                                               |         | Shorthand for `--method options`                       |
-| `--post`                                                                  |         | Shorthand for `--method post`                          |
-| `--put`                                                                   |         | Shorthand for `--method put`                           |
-| `--trace`                                                                 |         | Shorthand for `--method trace`                         |
-| `--patch`                                                                 |         | Shorthand for `--method patch`                         |
+| `--cwd=<directory>`                                                       | `.`     | 指定 Nuxt 项目的根目录        |
+| `--logLevel=<silent\|info\|verbose>`                                      |         | 指定构建时的日志级别                           |
+| `--force`                                                                 | `false` | 如果文件已存在则覆盖                |
+| `--mode=<client\|server>`                                                 |         | 为组件或插件添加客户端或服务器后缀 |
+| `--method=<connect\|delete\|get\|head\|options\|patch\|post\|put\|trace>` |         | 为 API 路由添加 HTTP 方法后缀              |
+| `--global`                                                                |         | 创建全局路由中间件                         |
+| `--api`                                                                   |         | 在 API 目录中创建服务器路由             |
+| `--pages`                                                                 |         | 在 app 模板中包含 NuxtPage 和 NuxtLayout    |
+| `--client`                                                                |         | `--mode client` 的简写                          |
+| `--server`                                                                |         | `--mode server` 的简写                          |
+| `--connect`                                                               |         | `--method connect` 的简写                       |
+| `--delete`                                                                |         | `--method delete` 的简写                        |
+| `--get`                                                                   |         | `--method get` 的简写                           |
+| `--head`                                                                  |         | `--method head` 的简写                          |
+| `--options`                                                               |         | `--method options` 的简写                       |
+| `--post`                                                                  |         | `--method post` 的简写                          |
+| `--put`                                                                   |         | `--method put` 的简写                           |
+| `--trace`                                                                 |         | `--method trace` 的简写                         |
+| `--patch`                                                                 |         | `--method patch` 的简写                         |
 <!--/add-template-opts-->
 
-**Modifiers:**
+**修饰符：**
 
-Some templates take an extra flag that adds a suffix (like `.client` or `.get`) to the generated file name. Each value `--mode` and `--method` accept is also a flag of its own, so `--mode client` and `--client` do the same thing.
+某些模板接受一个额外的标志，用于向生成文件名添加后缀（例如 `.client` 或 `.get`）。`--mode` 和 `--method` 接受的每个值也都有对应的独立标志，因此 `--mode client` 和 `--client` 的作用相同。
 
-Files are written relative to your [`srcDir`](/docs/api/nuxt-config#srcdir), which defaults to `app/`, and server files relative to your [`serverDir`](/docs/api/nuxt-config#serverdir). The paths below assume those defaults.
+文件会相对于你的 [`srcDir`](/docs/api/nuxt-config#srcdir) 写入，该目录默认为 `app/`；服务器文件则会相对于你的 [`serverDir`](/docs/api/nuxt-config#serverdir) 写入。以下路径均假定使用这些默认值。
 
 ```bash [Terminal]
 # Generates `app/plugins/sockets.client.ts`
@@ -68,7 +68,7 @@ npx nuxt add-template plugin sockets --mode client
 
 ## `nuxt add-template component`
 
-* Modifier flags: `--mode`, or `--client` / `--server`
+* 修饰符标志：`--mode`，或 `--client` / `--server`
 
 ```bash [Terminal]
 # Generates `app/components/TheHeader.vue`
@@ -91,7 +91,7 @@ npx nuxt add-template layout custom
 
 ## `nuxt add-template plugin`
 
-* Modifier flags: `--mode`, or `--client` / `--server`
+* 修饰符标志：`--mode`，或 `--client` / `--server`
 
 ```bash [Terminal]
 # Generates `app/plugins/analytics.ts`
@@ -112,7 +112,7 @@ npx nuxt add-template page "category/[id]"
 
 ## `nuxt add-template middleware`
 
-* Modifier flags: `--global`
+* 修饰符标志：`--global`
 
 ```bash [Terminal]
 # Generates `app/middleware/auth.ts`
@@ -121,7 +121,7 @@ npx nuxt add-template middleware auth
 
 ## `nuxt add-template api`
 
-* Modifier flags: `--method`, or the method as a flag of its own (`--get`, `--post`, and so on)
+* 修饰符标志：`--method`，或将方法作为独立标志（`--get`、`--post` 等）
 
 ```bash [Terminal]
 # Generates `server/api/hello.ts`
@@ -130,7 +130,7 @@ npx nuxt add-template api hello
 
 ## `nuxt add-template server-route`
 
-* Modifier flags: `--api` to write the route under `server/api` instead of `server/routes`
+* 修饰符标志：`--api`，用于将路由写入 `server/api` 而不是 `server/routes`
 
 ```bash [Terminal]
 # Generates `server/routes/webhook.ts`
@@ -145,5 +145,5 @@ npx nuxt add-template layer subscribe
 ```
 
 ::note
-A name that would resolve outside the project is refused, so pass a path relative to the project without leading slashes or `..` segments.
+解析后会位于项目外部的名称将被拒绝，因此请传入相对于项目的路径，且开头不能有斜杠，也不能包含 `..` 片段。
 ::

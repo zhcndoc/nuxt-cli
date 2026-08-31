@@ -1,6 +1,6 @@
 ---
 title: "nuxt task"
-description: "List and run Nitro tasks on your dev server."
+description: "在你的开发服务器上列出并运行 Nitro tasks。"
 links:
   - label: Source
     icon: i-simple-icons-github
@@ -8,7 +8,7 @@ links:
     size: xs
 ---
 
-The `task` command talks to the [Nitro tasks](https://nitro.build/guide/tasks) your project exposes, using the `nuxt dev` server running for it. Pass `--url` to target another server.
+`task` 命令使用正在运行的 `nuxt dev` 服务器，与项目公开的 [Nitro tasks](https://nitro.build/guide/tasks) 进行交互。传入 `--url` 可指定其他服务器。
 
 ## `nuxt task list`
 
@@ -20,22 +20,22 @@ npx nuxt task list [ROOTDIR] [--cwd=<directory>] [--url=<url>] [--json]
 
 ![nuxt task list](/capture/output/nuxt-task-list.svg)
 
-### Arguments
+### 参数
 
 <!--task-list-args-->
-| Argument  | Description                                          |
-|-----------|------------------------------------------------------|
-| `ROOTDIR` | The root directory of your Nuxt project (default: .) |
+| 参数       | 描述                                             |
+|------------|--------------------------------------------------|
+| `ROOTDIR`  | Nuxt 项目的根目录（默认值：.）                   |
 <!--/task-list-args-->
 
-### Options
+### 选项
 
 <!--task-list-opts-->
-| Option              | Default | Description                                                         |
-|---------------------|---------|---------------------------------------------------------------------|
-| `--cwd=<directory>` |         | Specify the root directory of your Nuxt project                     |
-| `--url=<url>`       |         | URL of the Nuxt server to talk to (default: the running dev server) |
-| `--json`            |         | Print output as JSON                                                |
+| 选项                | 默认值 | 描述                                                                  |
+|---------------------|--------|-----------------------------------------------------------------------|
+| `--cwd=<directory>` |        | 指定 Nuxt 项目的根目录                                                |
+| `--url=<url>`       |        | 要与之交互的 Nuxt 服务器 URL（默认值：正在运行的开发服务器）          |
+| `--json`            |        | 将输出打印为 JSON                                                     |
 <!--/task-list-opts-->
 
 ## `nuxt task run`
@@ -46,26 +46,26 @@ npx nuxt task run <NAME> [ROOTDIR] [--cwd=<directory>] [--url=<url>] [--payload=
 ```
 <!--/task-run-cmd-->
 
-### Arguments
+### 参数
 
 <!--task-run-args-->
-| Argument      | Description                                          |
-|---------------|------------------------------------------------------|
-| `NAME=<name>` | Name of the task to run                              |
-| `ROOTDIR`     | The root directory of your Nuxt project (default: .) |
+| 参数          | 描述                                             |
+|---------------|--------------------------------------------------|
+| `NAME=<name>` | 要运行的任务名称                                 |
+| `ROOTDIR`     | Nuxt 项目的根目录（默认值：.）                   |
 <!--/task-run-args-->
 
-### Options
+### 选项
 
 <!--task-run-opts-->
-| Option              | Default | Description                                                             |
-|---------------------|---------|-------------------------------------------------------------------------|
-| `--cwd=<directory>` |         | Specify the root directory of your Nuxt project                         |
-| `--url=<url>`       |         | URL of the Nuxt server to talk to (default: the running dev server)     |
-| `--payload=<json>`  |         | Task payload, either as a JSON object or as `--payload.key=value` pairs |
+| 选项                | 默认值 | 描述                                                                  |
+|---------------------|--------|-----------------------------------------------------------------------|
+| `--cwd=<directory>` |        | 指定 Nuxt 项目的根目录                                                |
+| `--url=<url>`       |        | 要与之交互的 Nuxt 服务器 URL（默认值：正在运行的开发服务器）          |
+| `--payload=<json>`  |        | 任务负载，可以是 JSON 对象，也可以是 `--payload.key=value` 对          |
 <!--/task-run-opts-->
 
-The task's result is printed as JSON. A payload can be given as a single JSON object or built up from individual keys:
+任务的结果会以 JSON 形式打印。可以提供单个 JSON 对象，也可以使用单独的键构建负载：
 
 ```bash [Terminal]
 npx nuxt task run db:seed --payload '{"count":10}'
@@ -73,7 +73,7 @@ npx nuxt task run db:seed --payload.count=10
 ```
 
 ::note
-Nitro only scans your `tasks` directory when tasks are enabled, so a server with none exposed may just need this:
+Nitro 仅会在启用 tasks 时扫描你的 `tasks` 目录，因此没有公开任何任务的服务器可能只需要添加以下内容：
 
 ```ts [nuxt.config.ts]
 export default defineNuxtConfig({
@@ -87,5 +87,5 @@ export default defineNuxtConfig({
 ::
 
 ::read-more{to="https://nitro.build/guide/tasks" icon="i-simple-icons-nitro" target="\_blank"}
-Read more about Nitro tasks.
+详细了解 Nitro tasks。
 ::

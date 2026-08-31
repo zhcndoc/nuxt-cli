@@ -1,6 +1,6 @@
 ---
 title: "nuxt analyze"
-description: "Analyze the production bundle or your Nuxt application."
+description: "分析生产构建包或你的 Nuxt 应用"
 links:
   - label: Source
     icon: i-simple-icons-github
@@ -14,33 +14,33 @@ npx nuxt analyze [ROOTDIR] [--cwd=<directory>] [--logLevel=<silent|info|verbose>
 ```
 <!--/analyze-cmd-->
 
-The `analyze` command builds Nuxt and analyzes the production bundle (experimental). The results are served on a local server when the build finishes, unless you pass `--no-serve` or `CI` is set in the environment.
+`analyze` 命令会构建 Nuxt 并分析生产构建包（实验性）。构建完成后，结果会在本地服务器上提供，除非你传入 `--no-serve` 或环境中设置了 `CI`
 
-Routes are not prerendered while analyzing, since prerendering runs the built app and its output is not what is being measured. Pass `--prerender` if your analysis needs it.
+分析时不会预渲染路由，因为预渲染会运行构建后的应用，而其输出并不是正在测量的内容。如果分析需要预渲染，请传入 `--prerender`
 
-## Arguments
+## 参数
 
 <!--analyze-args-->
-| Argument  | Description                                          |
-|-----------|------------------------------------------------------|
-| `ROOTDIR` | The root directory of your Nuxt project (default: .) |
+| 参数      | 描述                              |
+|-----------|--------------------------------------|
+| `ROOTDIR` | Nuxt 项目的根目录（默认值：.） |
 <!--/analyze-args-->
 
-## Options
+## 选项
 
 <!--analyze-opts-->
-| Option                               | Default   | Description                                                                                                       |
+| 选项                                | 默认值    | 描述                                                                                                       |
 |--------------------------------------|-----------|-------------------------------------------------------------------------------------------------------------------|
-| `--cwd=<directory>`                  |           | Specify the root directory of your Nuxt project                                                                   |
-| `--logLevel=<silent\|info\|verbose>` |           | Specify build-time log level                                                                                      |
-| `--dotenv=<path>...`                 |           | Path to `.env` file to load, relative to the root directory. Can be repeated, with later files taking precedence. |
-| `-e, --extends=<layer-name>...`      |           | Extend from a Nuxt layer                                                                                          |
-| `--name=<name>`                      | `default` | Name of the analysis                                                                                              |
-| `--serve`                            | `true`    | Serve the analysis results                                                                                        |
-| `--no-serve`                         |           | Skip serving the analysis results                                                                                 |
-| `--prerender`                        | `false`   | Prerender routes while analyzing                                                                                  |
+| `--cwd=<directory>`                  |           | 指定 Nuxt 项目的根目录                                                                   |
+| `--logLevel=<silent\|info\|verbose>` |           | 指定构建时日志级别                                                                                      |
+| `--dotenv=<path>...`                 |           | 要加载的 `.env` 文件路径，相对于根目录。可以重复使用，后面的文件优先级更高 |
+| `-e, --extends=<layer-name>...`      |           | 从 Nuxt layer 扩展                                                                                          |
+| `--name=<name>`                      | `default` | 分析的名称                                                                                              |
+| `--serve`                            | `true`    | 提供分析结果                                                                                        |
+| `--no-serve`                         |           | 跳过提供分析结果                                                                                 |
+| `--prerender`                        | `false`   | 分析时预渲染路由                                                                                  |
 <!--/analyze-opts-->
 
 ::note
-This command sets `process.env.NODE_ENV` to `production`.
+此命令会将 `process.env.NODE_ENV` 设置为 `production`
 ::

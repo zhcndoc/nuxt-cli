@@ -1,8 +1,8 @@
 ---
 title: "nuxt info"
-description: The info command logs information about the current or specified Nuxt project.
+description: info 命令会记录当前或指定 Nuxt 项目的信息
 links:
-  - label: Source
+  - label: 来源
     icon: i-simple-icons-github
     to: https://github.com/nuxt/cli/blob/main/packages/nuxt-cli/src/commands/info.ts
     size: xs
@@ -14,21 +14,21 @@ npx nuxt info [ROOTDIR] [--cwd=<directory>] [--json]
 ```
 <!--/info-cmd-->
 
-The `info` command logs information about the current or specified Nuxt project: the versions of Nuxt, Nitro and Vite it resolves, the package manager, the modules it loads and the build modules in its configuration. Use `--json` when you want to read it from a script.
+`info` 命令会记录当前或指定 Nuxt 项目的信息：它解析到的 Nuxt、Nitro 和 Vite 版本、包管理器、加载的模块，以及其配置中的构建模块。当你想从脚本中读取这些信息时，请使用 `--json`。
 
-## Arguments
+## 参数
 
 <!--info-args-->
-| Argument  | Description                                          |
-|-----------|------------------------------------------------------|
-| `ROOTDIR` | The root directory of your Nuxt project (default: .) |
+| 参数      | 描述                                               |
+|-----------|----------------------------------------------------|
+| `ROOTDIR` | Nuxt 项目的根目录（默认：.）                       |
 <!--/info-args-->
 
-## Options
+## 选项
 
 <!--info-opts-->
-| Option              | Default | Description                                     |
-|---------------------|---------|-------------------------------------------------|
-| `--cwd=<directory>` |         | Specify the root directory of your Nuxt project |
-| `--json`            |         | Print project info as JSON                      |
+| 选项                | 默认值 | 描述                                          |
+|---------------------|--------|-----------------------------------------------|
+| `--cwd=<directory>` |        | 指定 Nuxt 项目的根目录                         |
+| `--json`            |        | 将项目信息打印为 JSON                          |
 <!--/info-opts-->
