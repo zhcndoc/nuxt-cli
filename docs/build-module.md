@@ -1,8 +1,8 @@
 ---
 title: 'nuxt build-module'
-description: 'Nuxt command to build your Nuxt module before publishing.'
+description: '在发布前构建 Nuxt 模块的 Nuxt 命令。'
 links:
-  - label: Source
+  - label: 来源
     icon: i-simple-icons-github
     to: https://github.com/nuxt/module-builder/blob/main/src/cli.ts
     size: xs
@@ -14,29 +14,29 @@ npx nuxt build-module [ROOTDIR] [--cwd=<directory>] [--logLevel=<silent|info|ver
 ```
 <!--/build-module-cmd-->
 
-The `build-module` command runs `@nuxt/module-builder` to generate `dist` directory within your `rootDir` that contains the full build for your **nuxt-module**.
+`build-module` 命令运行 `@nuxt/module-builder`，在 `rootDir` 中生成 `dist` 目录，其中包含 **nuxt-module** 的完整构建产物。
 
-## Arguments
+## 参数
 
 <!--build-module-args-->
 | Argument      | Description                                    |
 |---------------|------------------------------------------------|
-| `ROOTDIR="."` | Specifies the working directory (default: `.`) |
+| `ROOTDIR="."` | 指定工作目录（默认：`.`） |
 <!--/build-module-args-->
 
-## Options
+## 选项
 
 <!--build-module-opts-->
 | Option                               | Default | Description                                                                      |
 |--------------------------------------|---------|----------------------------------------------------------------------------------|
-| `--cwd=<directory>`                  |         | Specify the working directory, this takes precedence over ROOTDIR (default: `.`) |
-| `--logLevel=<silent\|info\|verbose>` |         | Specify build-time log level                                                     |
-| `--build`                            | `false` | Build module for distribution                                                    |
-| `--stub`                             | `false` | Stub dist instead of actually building it for development                        |
-| `--sourcemap`                        | `false` | Generate sourcemaps                                                              |
-| `--prepare`                          | `false` | Prepare module for local development                                             |
+| `--cwd=<directory>`                  |         | 指定工作目录，其优先级高于 ROOTDIR（默认：`.`） |
+| `--logLevel=<silent\|info\|verbose>` |         | 指定构建时日志级别                                                     |
+| `--build`                            | `false` | 构建用于分发的模块                                                    |
+| `--stub`                             | `false` | 在开发过程中使用存根替代实际构建 dist                        |
+| `--sourcemap`                        | `false` | 生成 sourcemap                                                              |
+| `--prepare`                          | `false` | 为本地开发准备模块                                             |
 <!--/build-module-opts-->
 
 ::read-more{to="https://github.com/nuxt/module-builder" icon="i-simple-icons-github" target="\_blank"}
-Read more about `@nuxt/module-builder`.
+详细了解 `@nuxt/module-builder`。
 ::

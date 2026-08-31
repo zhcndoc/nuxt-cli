@@ -1,8 +1,8 @@
 ---
 title: "nuxt devtools"
-description: The devtools command allows you to enable or disable Nuxt DevTools on a per-project basis.
+description: devtools 命令允许你针对每个项目启用或禁用 Nuxt DevTools
 links:
-  - label: Source
+  - label: 来源
     icon: i-simple-icons-github
     to: https://github.com/nuxt/cli/blob/3.x/packages/nuxi/src/commands/devtools.ts
     size: xs
@@ -14,25 +14,25 @@ npx nuxt devtools <COMMAND> [ROOTDIR] [--cwd=<directory>]
 ```
 <!--/devtools-cmd-->
 
-Running `nuxt devtools enable` will install the Nuxt DevTools globally, and also enable it within the particular project you are using. It is saved as a preference in your user-level `.nuxtrc`. If you want to remove devtools support for a particular project, you can run `nuxt devtools disable`.
+运行 `nuxt devtools enable` 将全局安装 Nuxt DevTools，同时在你正在使用的特定项目中启用它。它会作为偏好设置保存在用户级别的 `.nuxtrc` 中。如果你想移除特定项目的 devtools 支持，可以运行 `nuxt devtools disable`。
 
-## Arguments
+## 参数
 
 <!--devtools-args-->
-| Argument      | Description                                    |
-|---------------|------------------------------------------------|
-| `COMMAND`     | Command to run (options: <enable\|disable>)    |
-| `ROOTDIR="."` | Specifies the working directory (default: `.`) |
+| 参数          | 描述                                   |
+|---------------|----------------------------------------|
+| `COMMAND`     | 要运行的命令（选项：<enable\|disable>） |
+| `ROOTDIR="."` | 指定工作目录（默认为：`.`）            |
 <!--/devtools-args-->
 
-## Options
+## 选项
 
 <!--devtools-opts-->
-| Option              | Default | Description                                                                      |
-|---------------------|---------|----------------------------------------------------------------------------------|
-| `--cwd=<directory>` |         | Specify the working directory, this takes precedence over ROOTDIR (default: `.`) |
+| 选项                | 默认值 | 描述                                                     |
+|---------------------|---------|----------------------------------------------------------|
+| `--cwd=<directory>` |         | 指定工作目录，其优先级高于 ROOTDIR（默认为：`.`） |
 <!--/devtools-opts-->
 
 ::read-more{icon="i-simple-icons-nuxtdotjs" to="https://devtools.nuxt.com" target="\_blank"}
-Read more about the **Nuxt DevTools**.
-::
+进一步了解 **Nuxt DevTools**。
+:::

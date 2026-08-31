@@ -1,8 +1,8 @@
 ---
 title: "nuxt test"
-description: The test command runs tests using @nuxt/test-utils.
+description: test 命令使用 @nuxt/test-utils 运行测试。
 links:
-  - label: Source
+  - label: 来源
     icon: i-simple-icons-github
     to: https://github.com/nuxt/cli/blob/3.x/packages/nuxi/src/commands/test.ts
     size: xs
@@ -14,27 +14,27 @@ npx nuxt test [ROOTDIR] [--cwd=<directory>] [--logLevel=<silent|info|verbose>] [
 ```
 <!--/test-cmd-->
 
-The `test` command runs tests using [`@nuxt/test-utils`](/docs/getting-started/testing). This command sets `process.env.NODE_ENV` to `test` if not already set.
+`test` 命令使用 [`@nuxt/test-utils`](/docs/getting-started/testing) 运行测试。如果尚未设置，此命令会将 `process.env.NODE_ENV` 设置为 `test`。
 
-## Arguments
+## 参数
 
 <!--test-args-->
-| Argument      | Description                                    |
-|---------------|------------------------------------------------|
-| `ROOTDIR="."` | Specifies the working directory (default: `.`) |
+| 参数          | 描述                         |
+|---------------|------------------------------|
+| `ROOTDIR="."` | 指定工作目录（默认：`.`） |
 <!--/test-args-->
 
-## Options
+## 选项
 
 <!--test-opts-->
-| Option                               | Default | Description                                                                      |
-|--------------------------------------|---------|----------------------------------------------------------------------------------|
-| `--cwd=<directory>`                  |         | Specify the working directory, this takes precedence over ROOTDIR (default: `.`) |
-| `--logLevel=<silent\|info\|verbose>` |         | Specify build-time log level                                                     |
-| `--dev`                              |         | Run in dev mode                                                                  |
-| `--watch`                            |         | Watch mode                                                                       |
+| 选项                                | 默认值 | 描述                                             |
+|-------------------------------------|---------|--------------------------------------------------|
+| `--cwd=<directory>`                 |         | 指定工作目录，此项优先于 ROOTDIR（默认：`.`） |
+| `--logLevel=<silent\|info\|verbose>` |         | 指定构建时日志级别                               |
+| `--dev`                             |         | 在开发模式下运行                               |
+| `--watch`                           |         | 监视模式                                       |
 <!--/test-opts-->
 
 ::note
-This command sets `process.env.NODE_ENV` to `test`.
+此命令会将 `process.env.NODE_ENV` 设置为 `test`。
 ::

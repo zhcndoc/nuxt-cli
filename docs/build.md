@@ -1,8 +1,8 @@
 ---
 title: "nuxt build"
-description: "Build your Nuxt application."
+description: "构建你的 Nuxt 应用。"
 links:
-  - label: Source
+  - label: 来源
     icon: i-simple-icons-github
     to: https://github.com/nuxt/cli/blob/3.x/packages/nuxi/src/commands/build.ts
     size: xs
@@ -14,35 +14,35 @@ npx nuxt build [ROOTDIR] [--cwd=<directory>] [--logLevel=<silent|info|verbose>] 
 ```
 <!--/build-cmd-->
 
-The `build` command creates a `.output` directory with all your application, server and dependencies ready for production.
+`build` 命令会创建一个 `.output` 目录，其中包含已准备好用于生产环境的全部应用、服务器和依赖项。
 
-## Arguments
+## 参数
 
 <!--build-args-->
-| Argument      | Description                                    |
-|---------------|------------------------------------------------|
-| `ROOTDIR="."` | Specifies the working directory (default: `.`) |
+| 参数          | 描述                                       |
+|---------------|--------------------------------------------|
+| `ROOTDIR="."` | 指定工作目录（默认：`.`）                 |
 <!--/build-args-->
 
-## Options
+## 选项
 
 <!--build-opts-->
-| Option                               | Default | Description                                                                                                                                          |
-|--------------------------------------|---------|------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `--cwd=<directory>`                  |         | Specify the working directory, this takes precedence over ROOTDIR (default: `.`)                                                                     |
-| `--logLevel=<silent\|info\|verbose>` |         | Specify build-time log level                                                                                                                         |
-| `--prerender`                        |         | Build Nuxt and prerender static routes                                                                                                               |
-| `--preset`                           |         | Nitro server preset                                                                                                                                  |
-| `--dotenv`                           |         | Path to `.env` file to load, relative to the root directory                                                                                          |
-| `--envName`                          |         | The environment to use when resolving configuration overrides (default is `production` when building, and `development` when running the dev server) |
-| `-e, --extends=<layer-name>`         |         | Extend from a Nuxt layer                                                                                                                             |
-| `--profile[=verbose]`                |         | Profile performance. Use `--profile` for CPU only, `--profile=verbose` for full report.                                                              |
+| 选项                               | 默认值 | 描述                                                                                                                                             |
+|------------------------------------|---------|-------------------------------------------------------------------------------------------------------------------------------------------------|
+| `--cwd=<directory>`                |         | 指定工作目录，其优先级高于 ROOTDIR（默认：`.`）                                                                                                  |
+| `--logLevel=<silent\|info\|verbose>` |         | 指定构建时的日志级别                                                                                                                             |
+| `--prerender`                      |         | 构建 Nuxt 并预渲染静态路由                                                                                                                        |
+| `--preset`                         |         | Nitro 服务器预设                                                                                                                                 |
+| `--dotenv`                         |         | 要加载的 `.env` 文件路径，相对于根目录                                                                                                           |
+| `--envName`                        |         | 解析配置覆盖时使用的环境（构建时默认为 `production`，运行开发服务器时默认为 `development`）                                                       |
+| `-e, --extends=<layer-name>`       |         | 从 Nuxt layer 扩展                                                                                                                               |
+| `--profile[=verbose]`              |         | 分析性能。使用 `--profile` 仅分析 CPU，使用 `--profile=verbose` 获取完整报告。                                                                     |
 <!--/build-opts-->
 
 ::note
-This command sets `process.env.NODE_ENV` to `production`.
+此命令会将 `process.env.NODE_ENV` 设置为 `production`。
 ::
 
 ::note
-`--prerender` will always set the `preset` to `static`
+`--prerender` 始终会将 `preset` 设置为 `static`
 ::

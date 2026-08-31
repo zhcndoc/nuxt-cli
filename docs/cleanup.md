@@ -1,6 +1,6 @@
 ---
 title: 'nuxt cleanup'
-description: 'Remove common generated Nuxt files and caches.'
+description: '移除常见的 Nuxt 生成文件和缓存。'
 links:
   - label: Source
     icon: i-simple-icons-github
@@ -14,7 +14,7 @@ npx nuxt cleanup [ROOTDIR] [--cwd=<directory>]
 ```
 <!--/cleanup-cmd-->
 
-The `cleanup` command removes common generated Nuxt files and caches, including:
+`cleanup` 命令会移除常见的 Nuxt 生成文件和缓存，包括：
 
 - `.nuxt`
 - `.output`
@@ -22,18 +22,18 @@ The `cleanup` command removes common generated Nuxt files and caches, including:
 - `node_modules/.vite`
 - `node_modules/.cache`
 
-## Arguments
+## 参数
 
 <!--cleanup-args-->
 | Argument      | Description                                    |
 |---------------|------------------------------------------------|
-| `ROOTDIR="."` | Specifies the working directory (default: `.`) |
+| `ROOTDIR="."` | 指定工作目录（默认值：`.`） |
 <!--/cleanup-args-->
 
-## Options
+## 选项
 
 <!--cleanup-opts-->
 | Option              | Default | Description                                                                      |
 |---------------------|---------|----------------------------------------------------------------------------------|
-| `--cwd=<directory>` |         | Specify the working directory, this takes precedence over ROOTDIR (default: `.`) |
+| `--cwd=<directory>` |         | 指定工作目录，此选项的优先级高于 ROOTDIR（默认值：`.`） |
 <!--/cleanup-opts-->

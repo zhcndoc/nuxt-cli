@@ -1,6 +1,6 @@
 ---
 title: "nuxt add"
-description: "Add modules to your Nuxt application with the command line."
+description: "使用命令行将模块添加到 Nuxt 应用程序中。"
 links:
   - label: Source
     icon: i-simple-icons-github
@@ -14,48 +14,48 @@ npx nuxt add <MODULENAME> [--cwd=<directory>] [--logLevel=<silent|info|verbose>]
 ```
 <!--/add-cmd-->
 
-## Arguments
+## 参数
 
 <!--add-args-->
-| Argument     | Description                                                         |
-|--------------|---------------------------------------------------------------------|
-| `MODULENAME` | Specify one or more modules to install by name, separated by spaces |
+| 参数         | 描述                                       |
+|--------------|--------------------------------------------|
+| `MODULENAME` | 指定要安装的一个或多个模块，模块名称以空格分隔 |
 <!--/add-args-->
 
-## Options
+## 选项
 
 <!--add-opts-->
-| Option                               | Default | Description                         |
-|--------------------------------------|---------|-------------------------------------|
-| `--cwd=<directory>`                  | `.`     | Specify the working directory       |
-| `--logLevel=<silent\|info\|verbose>` |         | Specify build-time log level        |
-| `--skipInstall`                      |         | Skip npm install                    |
-| `--skipConfig`                       |         | Skip nuxt.config.ts update          |
-| `--dev`                              |         | Install modules as dev dependencies |
+| 选项                                | 默认值 | 描述                     |
+|--------------------------------------|---------|--------------------------|
+| `--cwd=<directory>`                  | `.`     | 指定工作目录             |
+| `--logLevel=<silent\|info\|verbose>` |         | 指定构建时日志级别       |
+| `--skipInstall`                      |         | 跳过 npm install         |
+| `--skipConfig`                       |         | 跳过 nuxt.config.ts 更新 |
+| `--dev`                              |         | 将模块作为开发依赖安装   |
 <!--/add-opts-->
 
-The command lets you install [Nuxt modules](/modules) in your application with no manual work.
+此命令可以在无需手动操作的情况下，将 [Nuxt modules](/modules) 安装到你的应用程序中。
 
-When running the command, it will:
+运行此命令时，它将：
 
-- install the module as a dependency using your package manager (unless `--skipInstall` is set)
-- add it to your [package.json](/docs/directory-structure/package) file (unless `--skipInstall` is set)
-- update your [`nuxt.config`](/docs/directory-structure/nuxt-config) file (unless `--skipConfig` is set)
+- 使用你的包管理器将模块安装为依赖项（除非设置了 `--skipInstall`）
+- 将其添加到你的 [package.json](/docs/directory-structure/package) 文件中（除非设置了 `--skipInstall`）
+- 更新你的 [`nuxt.config`](/docs/directory-structure/nuxt-config) 文件（除非设置了 `--skipConfig`）
 
-If no module name is passed, you will be prompted to search for and select modules to add.
+如果未传入模块名称，系统会提示你搜索并选择要添加的模块。
 
-**Example:**
+**示例：**
 
-Installing the [`Pinia`](/modules/pinia) module
+安装 [`Pinia`](/modules/pinia) 模块
 
 ```bash [Terminal]
 npx nuxt add pinia
 ```
 
 ::note
-`nuxt module add` is an alias for `nuxt add`.
+`nuxt module add` 是 `nuxt add` 的别名。
 ::
 
 ::read-more{to="/docs/api/commands/module"}
-Read more about the other `nuxt module` commands.
+详细了解其他 `nuxt module` 命令。
 ::
