@@ -26,12 +26,6 @@ const SCAN_LIMIT = 1000
 
 const EVENT_SCAN_LIMIT = 10_000
 
-/**
- * How much earlier than the request's own start a log may be and still belong
- * to it, covering clock skew between the two feeds.
- */
-const TRACE_EARLY_MS = 2000
-
 /** A live table of served requests: the server-side view a browser cannot show. */
 export class RequestOverlay extends ScreenOverlay {
   #requests: RequestLog
@@ -138,7 +132,8 @@ export class RequestOverlay extends ScreenOverlay {
     if (this.#detail) {
       return formatHints([
         ['↑/↓', 'select'],
-        ['enter', 'copy'],
+        ['y', 'copy'],
+        ['Y', 'copy all'],
         ['esc', 'back'],
       ], columns)
     }
@@ -152,6 +147,7 @@ export class RequestOverlay extends ScreenOverlay {
       ['b', 'bundler'],
       ['/', 'search'],
       ['y', 'copy'],
+      ['Y', 'copy all'],
       ['q', 'close'],
     ], columns)
   }
@@ -182,16 +178,12 @@ export class RequestOverlay extends ScreenOverlay {
     if (!this.#events || request.id === undefined) {
       return []
     }
-    // Request ids restart with the server, so the id alone could pair a log
-    // from a previous run with a request from this one; time bounds it.
-    const start = request.time - request.duration - TRACE_EARLY_MS
-    return this.#events.recent(EVENT_SCAN_LIMIT, event =>
-      event.requestId === request.id && event.time >= start)
+    return this.#events.recent(EVENT_SCAN_LIMIT, event => event.requestId === request.id)
   }
 
   /** Error-log counts per request id, for the markers in the table. */
-  #errorCounts(): Map<number, number> {
-    const counts = new Map<number, number>()
+  #errorCounts(): Map<string, number> {
+    const counts = new Map<string, number>()
     for (const event of this.#events?.recent(EVENT_SCAN_LIMIT, event => event.requestId !== undefined && event.level <= 0) ?? []) {
       counts.set(event.requestId!, (counts.get(event.requestId!) ?? 0) + 1)
     }

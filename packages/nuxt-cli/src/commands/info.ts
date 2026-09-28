@@ -19,13 +19,13 @@ import { getBuilder } from '../utils/banner'
 import { resolveCatalogEntry } from '../utils/catalog'
 import { withDirectStdout } from '../utils/console'
 import { formatInfoBox } from '../utils/formatting'
-import { tryResolveNuxt } from '../utils/kit'
 import { logger } from '../utils/logger'
 import { resolveNitroVersion } from '../utils/nitro'
 import { getNuxtConfig } from '../utils/nuxt-config'
 import { readDependencyPackageJson } from '../utils/package-json'
 import { getPackageManagerVersion } from '../utils/packageManagers'
 import { resolveRootDir } from '../utils/paths'
+import { tryResolveNuxt } from '../utils/resolve-nuxt'
 import { rootDirArgs } from './_shared'
 
 const LEADING_SLASH_RE = /^\//
@@ -193,6 +193,18 @@ async function resolveDependencyVersion(
   return resolveCatalogEntry(cwd, projectPkg, name)?.specifier
     ?? dependencies[name]
     ?? devDependencies[name]
+}
+
+/** Render `nuxt info --json` output as the Markdown table `nuxt info` copies. */
+export function formatJsonAsMarkdownTable(json: Record<string, unknown>): string {
+  const labels = Object.fromEntries(Object.entries(JSON_KEYS).map(([label, key]) => [key, label]))
+  const info: Record<string, string | undefined> = {}
+  for (const [key, value] of Object.entries(json)) {
+    if (labels[key]) {
+      info[labels[key]] = Array.isArray(value) ? value.map(item => `\`${item}\``).join(', ') : (value as string | null) ?? undefined
+    }
+  }
+  return formatMarkdownTable(info)
 }
 
 export function formatMarkdownTable(info: Record<string, string | undefined>): string {

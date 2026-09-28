@@ -1,6 +1,7 @@
 import type { TerminalNotification } from '../../utils/terminal-host'
 import type { ShortcutContext } from '../shortcuts'
 import type { DevUIController } from './controller'
+import type { PanelStart } from './first-frame'
 import type { InfoSection } from './info-overlay'
 import type { Key } from './keys'
 import type { DevStatus, PanelState, PanelURL } from './panel'
@@ -22,6 +23,7 @@ import { MUTED, paint } from '../../utils/terminal-theme'
 import { checkForUpdate, isUpdateCheckEnabled, releaseNotesUrl } from '../../utils/update-check'
 import { openBrowser } from '../listen'
 import { setupShortcuts } from '../shortcuts'
+import { isShutdownAdopted } from '../shutdown'
 import { NOOP_CONTROLLER } from './controller'
 import { isBoxedNotice, normaliseMessage } from './events'
 import { HelpOverlay } from './help-overlay'
@@ -30,6 +32,7 @@ import { attachKeys } from './keys'
 import { LOGO_FRAME_MS } from './logo'
 import { LogOverlay } from './overlay'
 import { describeListenURLs, URL_LABELS, URL_STYLES } from './panel'
+import { readProjectReport } from './project-report'
 import { RequestOverlay } from './request-overlay'
 import { RequestLog } from './requests'
 import { RouteOverlay } from './route-overlay'
@@ -37,6 +40,9 @@ import { beginDevUI } from './session'
 
 export { beginDevUI } from './session'
 export type { DevUIController }
+
+/** The controller driving each session, so a second caller joins it. */
+const attached = new WeakMap<object, DevUIController>()
 
 /** How often the traffic ticker may repaint, so bursts cannot strobe the panel. */
 const TICKER_REPAINT_MS = 250
@@ -49,6 +55,9 @@ const ACTIVITY_MS = 700
 
 /** How long passing feedback stays on the panel before it is dropped. */
 const NOTICE_MS = 4000
+
+/** Statuses that mean a load is in flight, so the server is not up yet. */
+const LOADING_STATUSES = new Set<DevStatus>(['starting', 'building', 'restarting'])
 
 interface UIShortcut {
   keys: string[]
@@ -65,6 +74,8 @@ interface UIShortcut {
    */
   sequence?: string
   description: string
+  /** Whether the shortcut is waiting on the server before it can act. */
+  isArmed?: () => boolean
   action: () => void
 }
 
@@ -74,6 +85,8 @@ export interface DevUIOptions extends DevUISupportOptions {
   cwd?: string
   /** When the command started, so the panel can report a time to ready. */
   startTime?: number
+  /** A frame already on screen, for the session to adopt. */
+  start?: PanelStart
 }
 
 /**
@@ -87,9 +100,13 @@ export function setupDevUI(context: ShortcutContext, options: DevUIOptions = {})
     setupShortcuts(context)
     return NOOP_CONTROLLER
   }
+  if (attached.has(session)) {
+    return attached.get(session)!
+  }
 
   const sessionStart = Date.now()
   session.stopStartupTicker()
+  session.onTeardown(() => attached.delete(session))
   const { surface, events, state, surfaceText, render } = session
   const requests = new RequestLog()
   const version = options.version ?? state.version
@@ -118,12 +135,14 @@ export function setupDevUI(context: ShortcutContext, options: DevUIOptions = {})
   })
   let shortcuts: UIShortcut[] = []
   let qrCode: string | undefined
+  let armedOpen = false
   const helpOverlay = new HelpOverlay(() => shortcuts, write, release)
   const infoOverlay = new InfoOverlay(
     () => describeSession(context, cwd, requests, sessionStart, state.update, state.updateLink),
     write,
     release,
     () => qrCode,
+    () => readProjectReport(cwd),
   )
   const views = [overlay, trafficOverlay, routeOverlay, helpOverlay, infoOverlay]
   const openOverlay = () => views.find(view => view.isOpen)
@@ -131,7 +150,15 @@ export function setupDevUI(context: ShortcutContext, options: DevUIOptions = {})
   let animation: NodeJS.Timeout | undefined
   let animationInterval = LOGO_FRAME_MS
   let activityTimer: NodeJS.Timeout | undefined
+  /** Report currently named on the status line. */
+  let reported: string | undefined
   let noticeTimer: NodeJS.Timeout | undefined
+  /**
+   * The load in flight raised an error, so the server never came up. Held apart
+   * from the counts, which are cumulative and so cannot say whether anything is
+   * wrong *now*.
+   */
+  let loadFailed = false
 
   function update(patch: Partial<PanelState>): void {
     Object.assign(state, patch)
@@ -252,6 +279,7 @@ export function setupDevUI(context: ShortcutContext, options: DevUIOptions = {})
   function clearHistory(): void {
     events.clear()
     requests.clear()
+    loadFailed = false
     // With the history gone, the error badge would point at nothing.
     update({ failures: 0, ...state.status === 'error' ? { status: 'ready' as DevStatus, note: undefined } : {} })
   }
@@ -270,7 +298,17 @@ export function setupDevUI(context: ShortcutContext, options: DevUIOptions = {})
       return
     }
     if (event.level <= 0) {
-      update({ errors: (state.errors ?? 0) + 1, status: state.status === 'ready' ? 'error' : state.status })
+      // An error raised while a load is in flight is that load failing, and
+      // nothing else reports that it has. One raised by a server already up
+      // belongs to the page it was serving.
+      loadFailed ||= LOADING_STATUSES.has(state.status)
+      update({
+        errors: (state.errors ?? 0) + 1,
+        status: 'error',
+        // The phase note describes work that is no longer happening, so the
+        // badge's own description takes the line back.
+        ...state.status === 'error' ? {} : { note: undefined },
+      })
     }
     else if (event.level === 1) {
       // A warning about what the CLI could not do says nothing about the app, so
@@ -293,6 +331,11 @@ export function setupDevUI(context: ShortcutContext, options: DevUIOptions = {})
   })
 
   context.onReady(() => {
+    if (armedOpen && context.listener) {
+      armedOpen = false
+      openBrowser(context.listener.url)
+      syncHints()
+    }
     // Whether anything is still being waited for is progress's to say: a ready
     // listener only knows the socket is up, and a server nobody has asked for a
     // page yet is not warming up, it is idle.
@@ -320,8 +363,13 @@ export function setupDevUI(context: ShortcutContext, options: DevUIOptions = {})
 
   const quit = () => {
     session.teardown({ keep: true })
+    if (!isShutdownAdopted()) {
+      process.exit(130)
+    }
     process.emit('SIGINT' as any)
   }
+
+  const settleRestart = () => update({ status: loadFailed ? 'error' : 'ready', note: undefined })
 
   const restart = async (options: { clearCache?: boolean } = {}) => {
     if (!context.restart) {
@@ -343,7 +391,11 @@ export function setupDevUI(context: ShortcutContext, options: DevUIOptions = {})
       showNotice(`could not restart: ${error instanceof Error ? error.message : error}`, 'warn')
     }
     finally {
-      update({ status: 'ready' })
+      // A restart that got through, or whose load failed, has already reported
+      // itself through `setStatus`; only one nothing spoke for is left to settle.
+      if (state.status === 'restarting') {
+        settleRestart()
+      }
     }
   }
 
@@ -351,7 +403,7 @@ export function setupDevUI(context: ShortcutContext, options: DevUIOptions = {})
   shortcuts = [
     { keys: ['r'], ctrl: 'r', hint: 'restart', priority: 80, description: 'restart the dev server', action: () => void restart() },
     { keys: ['R'], sequence: 'R', description: 'restart with a cleared cache', action: () => void restart({ clearCache: true }) },
-    { keys: ['o'], hint: 'open', priority: 40, description: 'open in browser', action: () => void openBrowser(context.listener.url) },
+    { keys: ['o'], hint: 'open', priority: 40, description: 'open in browser', isArmed: () => armedOpen, action: () => open() },
     { keys: ['y'], description: 'copy the server URL to the clipboard', action: () => void copyURL(context, showNotice) },
     { keys: ['c'], ctrl: 'l', description: 'clear logs, requests and the console', action: () => {
       clearHistory()
@@ -371,12 +423,31 @@ export function setupDevUI(context: ShortcutContext, options: DevUIOptions = {})
     { keys: ['q'], ctrl: 'd', hint: 'quit', priority: 90, description: 'quit', action: () => state.status === 'ready' ? quit() : update({ confirmQuit: true }) },
   ]
 
-  update({
-    hints: shortcuts
-      .filter((shortcut): shortcut is UIShortcut & { hint: string, priority: number } => !!shortcut.hint)
-      .map(({ keys, hint, priority }) => ({ key: keys[0]!, label: hint, priority })),
-    hintsDimmed: false,
-  })
+  /** Open the app, or arm the shortcut so a starting server opens once it is up. */
+  function open(): void {
+    if (context.listener) {
+      openBrowser(context.listener.url)
+      return
+    }
+    armedOpen = !armedOpen
+    syncHints()
+  }
+
+  function syncHints(): void {
+    update({
+      hints: shortcuts
+        .filter((shortcut): shortcut is UIShortcut & { hint: string, priority: number } => !!shortcut.hint)
+        .map(({ keys, hint, priority, isArmed }) => ({
+          key: keys[0]!,
+          label: hint,
+          priority,
+          armed: isArmed?.(),
+        })),
+      hintsDimmed: false,
+    })
+  }
+
+  syncHints()
 
   function openView(view: { open: () => void }): void {
     surface.screenMode = 'alternate-screen'
@@ -445,7 +516,7 @@ export function setupDevUI(context: ShortcutContext, options: DevUIOptions = {})
       // detached and given the terminal back; re-attaching would put stdin
       // into raw mode with nothing listening and keep the process alive.
       if (!torn) {
-        detach = attachKeys(onKey)
+        detach = attachKeys(onKey, { ignoreBufferedInput: true })
         render()
       }
     }
@@ -545,12 +616,14 @@ export function setupDevUI(context: ShortcutContext, options: DevUIOptions = {})
 
   refresh()
 
-  return {
+  const controller: DevUIController = {
     interactive: true,
+    settleRestart,
     setStatus: (status, note) => {
       // The counts only describe what is currently wrong, so a successful load
       // supersedes earlier build errors.
       if (status === 'ready') {
+        loadFailed = false
         update({ status, note: undefined, progress: undefined, phaseStartedAt: undefined, phaseElapsedMs: undefined, errors: 0, warnings: 0, failures: 0 })
         return
       }
@@ -569,7 +642,7 @@ export function setupDevUI(context: ShortcutContext, options: DevUIOptions = {})
         request: log.request,
         requestId: log.requestId,
         source: log.origin ?? 'build',
-      }, { absorb: true }))
+      }, { route: log.raw ? 'reporter' : 'report' }))
     },
     pushRequests: (batch) => {
       if (!batch.length) {
@@ -582,17 +655,46 @@ export function setupDevUI(context: ShortcutContext, options: DevUIOptions = {})
       // Nuxt answers a failed render with its error page rather than logging it,
       // so the response status is the only signal that something is wrong.
       const failing = (app.at(-1)?.status ?? 0) >= 500
-      const recovered = app.length > 0 && !failing && state.status === 'error' && !state.errors
+      // A page that failed is answered by the next one that does not, but only
+      // a load that gets through clears a failed load.
+      const recovered = app.length > 0 && !failing && state.status === 'error' && !loadFailed
+      // A request that failed because the load did is a symptom of it, and the
+      // load error is reported in the logs rather than against the request.
+      const failureNote = failing && !loadFailed ? 'a request failed · press n to trace it' : undefined
       update({
         active: true,
         failures: (state.failures ?? 0) + failed.length,
         status: failing ? 'error' : recovered ? 'ready' : state.status,
-        note: failing ? 'a request failed · press n to trace it' : recovered ? undefined : state.note,
+        note: failureNote ?? (recovered ? undefined : state.note),
       })
       repaintTicker()
       clearTimeout(activityTimer)
       activityTimer = setTimeout(clearActivity, ACTIVITY_MS)
       activityTimer.unref?.()
+    },
+    pushReport: (report) => {
+      // Set before the event, which would otherwise paint the badge's standing
+      // description in between.
+      reported = report.id
+      update({ status: 'error', note: `${report.message} · press l to read it` })
+      events.push({
+        time: Date.now(),
+        level: 0,
+        type: 'error',
+        message: report.ansi,
+        rendered: report.ansi,
+        styled: true,
+        source: 'runtime',
+        request: report.request,
+        requestId: report.requestId,
+      })
+    },
+    clearReport: (id) => {
+      if (id !== undefined && id !== reported) {
+        return
+      }
+      reported = undefined
+      update({ note: undefined })
     },
     setRoutes: payload => routeOverlay.setRoutes(payload),
     setRendering: (pending, awaiting) => {
@@ -603,6 +705,9 @@ export function setupDevUI(context: ShortcutContext, options: DevUIOptions = {})
       })
     },
   }
+
+  attached.set(session, controller)
+  return controller
 }
 
 /**
@@ -635,7 +740,11 @@ function clearConsole(surface: PanelSurface): void {
 }
 
 async function copyURL(context: ShortcutContext, notify: (text: string, tone: 'info' | 'warn' | 'success') => void): Promise<void> {
-  const url = context.listener.publicURL || context.listener.url
+  const url = context.listener?.publicURL || context.listener?.url
+  if (!url) {
+    notify('no server to copy the url of yet', 'warn')
+    return
+  }
   try {
     const { writeText } = await import('tinyclip')
     await writeText(url)
@@ -649,6 +758,9 @@ async function copyURL(context: ShortcutContext, notify: (text: string, tone: 'i
 /** The URL block, in the order a user is most likely to want them. */
 function describeURLs(context: ShortcutContext): PanelURL[] {
   const { listener } = context
+  if (!listener) {
+    return []
+  }
   const urls: PanelURL[] = describeListenURLs(listener.getURLs())
   if (listener.publicURL && !urls.some(entry => entry.url === listener.publicURL)) {
     urls.push({ label: URL_LABELS.public, url: listener.publicURL, link: terminalLink(listener.publicURL, listener.publicURL), style: URL_STYLES.public })
@@ -685,8 +797,8 @@ function describeSession(
     {
       heading: 'urls',
       entries: [
-        ...listener.getURLs().map(({ type, url }) => [type, url, URL_STYLES[type]] as InfoSection['entries'][number]),
-        ['public', listener.publicURL, URL_STYLES.public],
+        ...listener?.getURLs().map(({ type, url }) => [type, url, URL_STYLES[type]] as InfoSection['entries'][number]) ?? [],
+        ['public', listener?.publicURL, URL_STYLES.public],
       ],
     },
     {
@@ -721,8 +833,8 @@ function linkVersion(version: string): string {
 
 /** A QR code for whichever URL another device could reach, if any. */
 async function resolveQRCode(context: ShortcutContext): Promise<string | undefined> {
-  const url = context.listener.qrURL
-    || context.listener.getURLs().find(({ type }) => type !== 'local')?.url
+  const url = context.listener?.qrURL
+    || context.listener?.getURLs().find(({ type }) => type !== 'local')?.url
   if (!url) {
     return undefined
   }

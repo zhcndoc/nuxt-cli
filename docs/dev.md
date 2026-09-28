@@ -29,40 +29,40 @@ npx nuxt dev [ROOTDIR] [--cwd=<directory>] [--logLevel=<silent|info|verbose>] [-
 ## 选项
 
 <!--dev-opts-->
-| 选项                                | 默认值            | 描述                                                                                                                                                 |
-|-------------------------------------|-------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------|
-| `--cwd=<directory>`                 |                   | 指定 Nuxt 项目的根目录                                                                                                      |
-| `--logLevel=<silent\|info\|verbose>` |                   | 指定构建时日志级别                                                                                                                         |
-| `--dotenv=<path>...`                |                   | 要加载的 `.env` 文件路径，相对于根目录。可以重复指定，后面的文件具有更高优先级。                                    |
-| `--envName=<environment>`           |                   | 解析配置覆盖时使用的环境（构建时默认为 `production`，运行 dev 服务器时默认为 `development`） |
-| `-e, --extends=<layer-name>...`     |                   | 从 Nuxt layer 扩展                                                                                                                             |
-| `--inspect`                         |                   | 为服务于应用的进程启用 Node.js inspector（`--inspect=[host:]port`）                                                              |
-| `--inspect-brk`                     |                   | 启用 Node.js inspector，并等待调试器连接（`--inspect-brk=[host:]port`）                                                         |
-| `--tui`                             | `true`            | 交互式终端 UI（固定状态面板、折叠日志和单键快捷键）                                                                  |
-| `--no-tui`                          |                   | 禁用交互式终端 UI，改为直接输出日志                                                                                          |
-| `--clear`                           | `false`           | 重启时清空控制台                                                                                                                             |
-| `-f, --fork`                        | runtime-dependent | 从 fork 的子进程中提供应用服务（在运行时支持的情况下默认开启）                                                           |
-| `--no-fork`                         |                   | 禁用 fork 模式                                                                                                                                  |
-| `-p, --port=<port>`                 |                   | 要监听的端口（默认：`NUXT_PORT \|\| NITRO_PORT \|\| PORT \|\| nuxtOptions.devServer.port`）                                                   |
-| `--takeover`                        |                   | 停止当前项目中已运行的 dev 服务器并接管它                                                                                 |
-| `--no-takeover`                     |                   | 永不停止当前项目中已运行的 dev 服务器                                                                                              |
-| `--strictPort`                      | `false`           | 如果请求的端口不可用则退出，而不是使用其他端口                                                                               |
-| `-h, --host=<host>`                 |                   | 要监听的主机（默认：`NUXT_HOST \|\| NITRO_HOST \|\| HOST \|\| nuxtOptions.devServer?.host`）                                                  |
-| `-o, --open`                        | `false`           | 在浏览器中打开 URL                                                                                                                          |
-| `--open.url=<url\|path>`            |                   | 要打开的路径或 URL，而不是 dev 服务器根目录                                                                                                   |
-| `--clipboard`                       | `false`           | 将 URL 复制到剪贴板                                                                                                                        |
-| `--qr`                              |                   | 为公共 URL 打印二维码（有可用公共 URL 时默认启用）                                                                        |
-| `--tunnel`                          |                   | 通过 Cloudflare quick tunnel 暴露服务器                                                                                                      |
-| `--public`                          |                   | 监听所有网络接口                                                                                                                     |
-| `--publicURL=<url>`                 |                   | 要显示的公共 URL（用于二维码和剪贴板）                                                                                               |
-| `--https`                           |                   | 使用本地信任的开发证书启用 HTTPS                                                                                          |
-| `--https.cert=<path>`               |                   | TLS 证书路径                                                                                                                              |
-| `--https.key=<path>`                |                   | TLS 密钥路径                                                                                                                                      |
-| `--https.pfx=<path>`                |                   | PKCS#12（.p12/.pfx）密钥库路径                                                                                                                 |
-| `--https.passphrase=<passphrase>`   |                   | TLS 密钥或密钥库的密码                                                                                                               |
-| `--https.validityDays=<days>`       |                   | 生成的自签名证书的有效天数                                                                                             |
-| `--https.domains=<domain>...`       |                   | 生成证书的域名。可以重复指定，也可以以逗号分隔的列表形式提供。                                                             |
-| `--profile=<verbose>`               |                   | 分析性能，在退出时写入 V8 CPU profile 和 JSON 报告。使用 `--profile=verbose` 获取完整的控制台报告。                          |
+| 选项                                 | 默认值            | 描述                                                                                                                                          |
+|--------------------------------------|-------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `--cwd=<directory>`                  |                   | 指定 Nuxt 项目的根目录                                                                                                      |
+| `--logLevel=<silent\|info\|verbose>` |                   | 指定构建时的日志级别                                                                                                                         |
+| `--dotenv=<path>...`                 |                   | 要加载的 `.env` 文件路径，相对于根目录。可以重复指定，后面的文件优先级更高。                                    |
+| `--envName=<environment>`            |                   | 解析配置覆盖项时使用的环境（构建时默认为 `production`，运行 dev 服务器时默认为 `development`） |
+| `-e, --extends=<layer-name>...`      |                   | 从 Nuxt layer 扩展                                                                                                                             |
+| `--inspect`                          |                   | 为服务器代码启用 Node.js 检查器（`--inspect=[host:]port`），并在下一个端口为 CLI 进程启用检查器                                     |
+| `--inspect-brk`                      |                   | 类似于 `--inspect`，并在加载 Nuxt 前等待调试器连接到 CLI 进程（`--inspect-brk=[host:]port`）                             |
+| `--tui`                              | `true`            | 交互式终端 UI（固定状态面板、折叠日志和单键快捷键）                                                                  |
+| `--no-tui`                           |                   | 禁用交互式终端 UI，改为直接输出日志                                                                                          |
+| `--clear`                            | `false`           | 重启时清除控制台                                                                                                                             |
+| `-f, --fork`                         | 取决于运行时 | 从 fork 出来的子进程提供应用服务（在运行时支持的情况下默认启用）                                                           |
+| `--no-fork`                          |                   | 禁用 fork 模式                                                                                                                                  |
+| `-p, --port=<port>`                  |                   | 监听端口（默认值：`NUXT_PORT \|\| NITRO_PORT \|\| PORT \|\| nuxtOptions.devServer.port`）                                                   |
+| `--takeover`                         |                   | 停止此项目中已运行的 dev 服务器并接管其位置                                                                                 |
+| `--no-takeover`                      |                   | 永不停止此项目中已运行的 dev 服务器                                                                                              |
+| `--strictPort`                       | `false`           | 如果请求的端口不可用，则退出而不是使用其他端口                                                                               |
+| `-h, --host=<host>`                  |                   | 监听主机（默认值：`NUXT_HOST \|\| NITRO_HOST \|\| HOST \|\| nuxtOptions.devServer?.host`）                                                  |
+| `-o, --open`                         | `false`           | 在浏览器中打开 URL                                                                                                                          |
+| `--open.url=<url\|path>`             |                   | 要打开的路径或 URL，而不是 dev 服务器根目录                                                                                                   |
+| `--clipboard`                        | `false`           | 将 URL 复制到剪贴板                                                                                                                        |
+| `--qr`                               |                   | 打印公开 URL 的二维码（有可用 URL 时默认启用）                                                                        |
+| `--tunnel`                           |                   | 通过 Cloudflare quick tunnel 暴露服务器                                                                                                      |
+| `--public`                           |                   | 监听所有网络接口并允许任意主机连接                                                                                       |
+| `--publicURL=<url>`                  |                   | 要显示的公开 URL（用于二维码和剪贴板）                                                                                               |
+| `--https`                            |                   | 使用本地信任的开发证书启用 HTTPS                                                                                          |
+| `--https.cert=<path>`                |                   | TLS 证书路径                                                                                                                              |
+| `--https.key=<path>`                 |                   | TLS 密钥路径                                                                                                                                      |
+| `--https.pfx=<path>`                 |                   | PKCS#12（.p12/.pfx）密钥库路径                                                                                                                 |
+| `--https.passphrase=<passphrase>`    |                   | TLS 密钥或密钥库的密码                                                                                                               |
+| `--https.validityDays=<days>`        |                   | 生成的自签名证书的有效天数                                                                                             |
+| `--https.domains=<domain>...`        |                   | 生成的证书的域名。可以重复指定，也可以使用逗号分隔的列表。                                                             |
+| `--profile=<verbose>`                |                   | 分析性能，在退出时写入 V8 CPU profile 和 JSON 报告。使用 `--profile=verbose` 可将完整报告打印到控制台。                          |
 <!--/dev-opts-->
 
 也可以通过 `NUXT_PORT`、`NITRO_PORT`、`PORT`、`NUXT_HOST`、`NITRO_HOST` 或 `HOST` 环境变量设置端口和主机。
@@ -88,7 +88,9 @@ npx nuxt dev [ROOTDIR] [--cwd=<directory>] [--logLevel=<silent|info|verbose>] [-
 | `?`         | 显示所有快捷键                            |
 | `q`         | 退出                                          |
 
-传入 `--no-tui` 可改为直接输出日志，`NUXT_TUI=plain` 也会永久执行相同操作。`NUXT_TUI=1` 会在环境检查本来会将其关闭的情况下强制开启 UI，但当输出通过管道传输或重定向时除外。
+在视图中，`y` 会复制选中的行，`shift-y` 会复制筛选条件和搜索结果留下的所有行；如果内容过多而无法粘贴，则保留最新的行。在信息视图中，`shift-y` 会改为复制 [`nuxt info`](/docs/api/commands/info) 表格。
+
+传入 `--no-tui` 可直接输出日志；设置 `NUXT_TUI=plain` 也会永久采用此模式。`NUXT_TUI=1` 会在环境检查原本会关闭 UI 的情况下强制启用 UI，但如果输出通过管道传输或重定向，则不会启用。
 
 ![带有普通输出的 nuxt dev](/capture/output/nuxt-dev-plain-static.svg)
 
@@ -114,7 +116,17 @@ Node 不会读取系统信任存储，因此从 Node 向使用生成证书的服
 
 ## 调试
 
-`--inspect` 会在实际为应用提供服务的进程上打开 Node.js inspector，`--inspect-brk` 则会等待调试器连接后再运行。两者都接受可选的 `[host:]port`。
+`--inspect` 会为服务器代码启用 Node.js 检查器：服务器路由、中间件和服务端渲染，这些代码运行在 Nitro worker thread 中。它接受可选的 `[host:]port`，默认值为 `127.0.0.1:9229`，因此 Chrome DevTools（`chrome://inspect`）和大多数编辑器无需配置即可找到它。服务器重新加载时，调试器会自动重新连接。
+
+### 调试 CLI
+
+`nuxt.config`、模块和构建钩子则在 CLI 进程中运行，该进程会在下一个端口启用自己的检查器（默认为 `9230`）。在 `chrome://inspect`（**Configure...**）中将 `localhost:9230` 添加为目标，或将编辑器指向该地址。
+
+若要调试 Nuxt 加载时运行的代码，请使用 `--inspect-brk`。CLI 进程会在加载 Nuxt 前等待调试器连接到下一个端口：
+
+```bash
+npx nuxt dev --inspect-brk
+```
 
 `--profile` 会在进程退出时，将 V8 CPU profile 写入项目中的 `nuxt-dev.cpuprofile`。`--profile=verbose` 还会将完整报告打印到控制台。
 
