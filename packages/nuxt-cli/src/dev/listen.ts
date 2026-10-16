@@ -488,7 +488,7 @@ export function parsePort(value: string | number | undefined): number | undefine
   return port
 }
 
-async function resolvePort(requestedPort: number | undefined, hostname: string, strictPort?: boolean): Promise<number> {
+export async function resolvePort(requestedPort: number | undefined, hostname: string, strictPort?: boolean): Promise<number> {
   if (requestedPort === 0) {
     return getPort({ random: true, host: hostname || undefined })
   }
@@ -547,19 +547,28 @@ export async function printQRCode(url: string, { showURL = false }: { showURL?: 
   console.log(`\n${centerBlock(renderUnicodeCompact(url))}${caption}\n`)
 }
 
-export async function copyURL(url: string): Promise<void> {
+/** Write `text` to the system clipboard, resolving whether it succeeded. */
+export async function writeClipboard(text: string): Promise<boolean> {
   if (!hasDisplayServer()) {
-    logger.warn('No clipboard is available in this environment.')
-    return
+    return false
   }
   try {
     const { writeText } = await import('tinyclip')
-    await writeText(url)
-    logger.info('URL copied to clipboard.')
+    await writeText(text)
+    return true
   }
   catch (error) {
-    debug('Failed to copy URL to clipboard:', error)
-    logger.warn('Could not copy the URL to the clipboard.')
+    debug('Failed to write to the clipboard:', error)
+    return false
+  }
+}
+
+export async function copyURL(url: string): Promise<void> {
+  if (await writeClipboard(url)) {
+    logger.info('URL copied to clipboard.')
+  }
+  else {
+    logger.warn('No clipboard is available in this environment.')
   }
 }
 
@@ -643,12 +652,12 @@ export function openBrowser(url: string): void {
   if (!resolved) {
     return
   }
-  if (!hasDisplayServer()) {
+  const [command, args] = resolved
+  if (command === 'xdg-open' && !hasDisplayServer()) {
     logger.warn(`No browser is available in this environment. Open ${styleText('cyan', url)} manually.`)
     return
   }
 
-  const [command, args] = resolved
   const onFailure = (error: unknown) => {
     debug('Failed to open browser:', error)
     logger.warn(`Could not open ${styleText('cyan', url)} in a browser.`)

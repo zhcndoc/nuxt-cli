@@ -6,11 +6,11 @@ import type { ProgressSnapshot } from '../utils/progress-snapshot'
 
 import process from 'node:process'
 
-import { BroadcastChannel } from 'node:worker_threads'
-
 import { isAbsolute, join, relative } from 'pathe'
 
 import { debug } from '../utils/logger'
+import { openBroadcast } from './broadcast'
+import { isLoopbackAddress } from './host-check'
 import { DEV_INTERNAL_PREFIX } from './progress'
 
 /** Base path of the live error channel, before `nuxt.config` is known. */
@@ -109,19 +109,14 @@ export function isErrorChannelRequest(path: string, base: string): boolean {
   return path === base || path.startsWith(`${base}/`)
 }
 
-export interface HandleErrorChannelOptions {
-  /**
-   * Whether the caller may see reports raised for other requests and use
-   * privileged actions. Untrusted callers are served the channel scoped to
-   * their own request. Default `true`.
-   */
-  trusted?: boolean
+/** Whether `req` came from this machine, by socket address since headers are forgeable. */
+export function isLocalPeer(req: IncomingMessage): boolean {
+  return isLoopbackAddress(req.socket?.remoteAddress)
 }
 
-/** Answer a request under the mounted channel path. */
-export async function handleErrorChannelRequest(req: IncomingMessage, res: ServerResponse, options: ErrorChannelOptions = {}, caller: HandleErrorChannelOptions = {}): Promise<void> {
+export async function handleErrorChannelRequest(req: IncomingMessage, res: ServerResponse, options: ErrorChannelOptions = {}): Promise<void> {
   const instance = await useErrorChannel(options)
-  if (await instance.handler(req, res, caller)) {
+  if (await instance.handler(req, res, { trusted: isLocalPeer(req) })) {
     return
   }
   res.statusCode = 404
@@ -167,12 +162,6 @@ export async function renderErrorPage(report: ErrorReport, options: { cwd?: stri
     environment: 'Build',
     theme: nuxtTheme,
   })
-}
-
-/** Render `report` for the terminal, with its own marker and colours. */
-async function renderReportAnsi(report: ErrorReport, cwd?: string): Promise<string> {
-  const { renderAnsi } = await import('my-bad')
-  return renderAnsi(report, { cwd })
 }
 
 /** The CLI's own phase sequence, as the channel knows it apart from the app's. */
@@ -295,6 +284,7 @@ export interface ReportContext {
 
 /** Everything the supervisor needs to present `report`, rendered for a terminal. */
 export async function summariseReport(report: ErrorReport, context: ReportContext = {}, cwd: string = process.cwd()): Promise<DevReportSummary> {
+  const { renderAnsi } = await import('my-bad')
   // A request that hit a compile error is described by the compile error.
   const named = findCompileReport(report) ?? report
   const frames = named.frames.some(frame => frame.file) ? named.frames : report.frames
@@ -308,7 +298,7 @@ export async function summariseReport(report: ErrorReport, context: ReportContex
     location: frame?.file && formatLocation(frame.file, frame.line, frame.column, cwd),
     requestId: context.requestId,
     request: context.request,
-    ansi: await renderReportAnsi(report, cwd),
+    ansi: renderAnsi(report, { cwd }),
   }
 }
 
@@ -341,11 +331,7 @@ export interface ErrorBridgeHandlers {
  * until the returned function is called.
  */
 export function openErrorBridge(handlers: ErrorBridgeHandlers = {}, options: ErrorChannelOptions = {}): () => void {
-  const broadcast = new BroadcastChannel(ERROR_BROADCAST_CHANNEL)
-  broadcast.unref()
-  broadcast.postMessage(SYNC_MESSAGE)
-  broadcast.onmessage = (event: { data: unknown }) => {
-    const message = event.data
+  const broadcast = openBroadcast(ERROR_BROADCAST_CHANNEL, (message: unknown) => {
     if (!isDevErrorMessage(message)) {
       return
     }
@@ -377,8 +363,9 @@ export function openErrorBridge(handlers: ErrorBridgeHandlers = {}, options: Err
         }
       }
     }).catch(error => debug('Could not handle a forwarded error report:', error))
-  }
-  return () => broadcast.close()
+  })
+  broadcast?.postMessage(SYNC_MESSAGE)
+  return () => broadcast?.close()
 }
 
 export async function closeErrorChannel(): Promise<void> {

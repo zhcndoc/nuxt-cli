@@ -9,7 +9,7 @@ import { isInteractiveSession } from './stdout'
 export interface LockInfo {
   pid: number
   startedAt: number
-  command: 'dev' | 'build' | 'analyze'
+  command: 'dev' | 'build' | 'analyze' | 'preview'
   cwd: string
   /**
    * Whether the holder was started from a terminal a user is sitting at. Only
@@ -25,6 +25,8 @@ export interface LockInfo {
    * Signalling the holder alone would leave its supervisor running.
    */
   parentPid?: number
+  /** PID of the child process serving, for a holder that spawns one (`nuxt preview`). */
+  serverPid?: number
   /** PID of the process that claimed this lock, written before it signals us. */
   takenOverBy?: number
 }
@@ -55,7 +57,11 @@ export function isProcessAlive(pid: number): boolean {
 
 /** Read the lock held for `buildDir`, if there is one. */
 export function readLock(buildDir: string): LockInfo | undefined {
-  return readLockFile(join(buildDir, LOCK_FILENAME))
+  return readLockFile(lockPathFor(buildDir))
+}
+
+function lockPathFor(buildDir: string): string {
+  return join(buildDir, LOCK_FILENAME)
 }
 
 /** The lock on `buildDir` when another process is currently holding it. */
@@ -73,14 +79,11 @@ export function readActiveLock(buildDir: string): LockInfo | undefined {
  * The lock is re-read and matched on identity, so one that has been replaced
  * since the caller inspected it is left alone.
  */
-export function clearStaleLock(buildDir: string, info: LockInfo): boolean {
-  const lockPath = join(buildDir, LOCK_FILENAME)
-  const current = readLockFile(lockPath)
-  if (!current || current.pid !== info.pid || current.startedAt !== info.startedAt) {
-    return false
+export function clearStaleLock(buildDir: string, info: LockInfo): void {
+  const current = readLock(buildDir)
+  if (current?.pid === info.pid && current.startedAt === info.startedAt) {
+    tryUnlink(lockPathFor(buildDir))
   }
-  tryUnlink(lockPath)
-  return true
 }
 
 /**
@@ -89,12 +92,10 @@ export function clearStaleLock(buildDir: string, info: LockInfo): boolean {
  * process, and never creates one.
  */
 export function markTakenOver(buildDir: string, byPid: number): void {
-  const lockPath = join(buildDir, LOCK_FILENAME)
-  const current = readLockFile(lockPath)
-  if (!current || current.pid === byPid) {
-    return
+  const current = readLock(buildDir)
+  if (current && current.pid !== byPid) {
+    writeLockFile(lockPathFor(buildDir), { ...current, takenOverBy: byPid })
   }
-  writeLockFile(lockPath, { ...current, takenOverBy: byPid })
 }
 
 /**
@@ -102,13 +103,10 @@ export function markTakenOver(buildDir: string, byPid: number): void {
  * process's claim is left alone.
  */
 export function clearTakeover(buildDir: string, byPid: number): void {
-  const lockPath = join(buildDir, LOCK_FILENAME)
-  const current = readLockFile(lockPath)
-  if (!current || current.takenOverBy !== byPid) {
-    return
+  const current = readLock(buildDir)
+  if (current?.takenOverBy === byPid) {
+    writeLockFile(lockPathFor(buildDir), { ...current, takenOverBy: undefined })
   }
-  const { takenOverBy: _claim, ...rest } = current
-  writeLockFile(lockPath, rest)
 }
 
 /** PID that claimed our own lock, if this process is being taken over. */
@@ -130,7 +128,7 @@ function readLockFile(lockPath: string): LockInfo | undefined {
   }
 }
 
-const LOCK_COMMANDS = new Set<LockInfo['command']>(['dev', 'build', 'analyze'])
+const LOCK_COMMANDS = new Set<LockInfo['command']>(['dev', 'build', 'analyze', 'preview'])
 const MAX_LOCK_STRING_LENGTH = 1024
 // C0 and C1 control characters, which would otherwise reach the terminal when a
 // lock is described to the user.
@@ -192,6 +190,7 @@ export function parseLockInfo(raw: unknown): LockInfo | undefined {
   const port = input.port
   const hostname = lockText(input.hostname)
   const parentPid = lockPid(input.parentPid)
+  const serverPid = lockPid(input.serverPid)
   const takenOverBy = lockPid(input.takenOverBy)
 
   return {
@@ -204,6 +203,7 @@ export function parseLockInfo(raw: unknown): LockInfo | undefined {
     ...hostname && LOCK_HOSTNAME_RE.test(hostname) ? { hostname } : {},
     ...lockURL(input.url) ? { url: lockURL(input.url) } : {},
     ...parentPid ? { parentPid } : {},
+    ...serverPid ? { serverPid } : {},
     ...takenOverBy ? { takenOverBy } : {},
   }
 }
@@ -233,16 +233,9 @@ function tryUnlink(lockPath: string): void {
 }
 
 function isLockActive(info: LockInfo): boolean {
-  if (info.pid === process.pid) {
-    return false
-  }
-  if (!isProcessAlive(info.pid)) {
-    return false
-  }
-  if (Date.now() - info.startedAt > MAX_LOCK_AGE_MS) {
-    return false
-  }
-  return true
+  return info.pid !== process.pid
+    && Date.now() - info.startedAt <= MAX_LOCK_AGE_MS
+    && isProcessAlive(info.pid)
 }
 
 /**
@@ -251,14 +244,8 @@ function isLockActive(info: LockInfo): boolean {
  * and `NUXT_LOCK=0` opt out.
  */
 export function isLockEnabled(): boolean {
-  if (isEnvFlagSet(process.env.NUXT_IGNORE_LOCK)) {
-    return false
-  }
-  return process.env.NUXT_LOCK !== '0' && process.env.NUXT_LOCK !== 'false'
-}
-
-function isEnvFlagSet(value: string | undefined): boolean {
-  return !!value && value !== '0' && value !== 'false'
+  const { NUXT_IGNORE_LOCK: ignore, NUXT_LOCK: lock } = process.env
+  return (!ignore || ignore === '0' || ignore === 'false') && lock !== '0' && lock !== 'false'
 }
 
 type LockResult
@@ -280,7 +267,7 @@ export function acquireLock(
   info: Omit<LockInfo, 'pid' | 'startedAt' | 'interactive'>,
   options: AcquireLockOptions = {},
 ): LockResult {
-  return acquireLockAt(join(buildDir, LOCK_FILENAME), buildDir, info, options)
+  return acquireLockAt(lockPathFor(buildDir), buildDir, info, options)
 }
 
 /**
@@ -300,6 +287,11 @@ export function acquireOutputLock(
   const dir = join(rootDir, OUTPUT_LOCK_DIRNAME)
   const key = createHash('sha256').update(outputDir).digest('hex').slice(0, 8)
   return acquireLockAt(join(dir, `output-${key}.lock`), dir, info)
+}
+
+/** Kept apart from the build directory, which `nuxt preview` never writes to. */
+export function previewLockDir(rootDir: string): string {
+  return join(rootDir, OUTPUT_LOCK_DIRNAME, 'preview')
 }
 
 function acquireLockAt(
@@ -367,9 +359,7 @@ export function updateLock(
   if (!isLockEnabled()) {
     return
   }
-  const lockPath = join(buildDir, LOCK_FILENAME)
-  const current = readLockFile(lockPath)
-  // Only overwrite our own lock; never touch another process's file.
+  const current = readLock(buildDir)
   if (current && current.pid !== process.pid) {
     return
   }
@@ -380,7 +370,7 @@ export function updateLock(
     takenOverBy: current?.takenOverBy,
     ...info,
   }
-  writeLockFile(lockPath, next)
+  writeLockFile(lockPathFor(buildDir), next)
 }
 
 function makeRelease(lockPath: string): () => void {
@@ -398,10 +388,6 @@ function makeRelease(lockPath: string): () => void {
     }
   }
 
-  // `exit` fires on normal termination, including after Node's default signal
-  // handling (SIGINT → exit 130) when no custom signal handler runs. We
-  // deliberately do not install SIGINT/SIGTERM listeners: that would suppress
-  // Node's default signal behavior and other shutdown logic.
   process.on('exit', release)
 
   return release

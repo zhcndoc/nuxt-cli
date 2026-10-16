@@ -5,10 +5,10 @@ import type { OverlayEntry } from './screen'
 
 import { styleText } from 'node:util'
 
-import { MUTED, paint } from '../../utils/terminal-theme'
+import { truncate, visibleWidth } from '../../utils/formatting'
 
+import { MUTED, paint } from '../../utils/terminal-theme'
 import { formatHints, ScreenOverlay } from './screen'
-import { truncate } from './width'
 
 type LevelFilter = 'all' | 'warn' | 'error'
 
@@ -57,7 +57,7 @@ export class LogOverlay extends ScreenOverlay {
         return this.#setLevel('warn')
       case 'e':
         return this.#setLevel('error')
-      case 'c':
+      case 't':
         return this.#toggleSource('cli')
       case 'b':
         return this.#toggleSource('build')
@@ -65,6 +65,7 @@ export class LogOverlay extends ScreenOverlay {
         return this.#toggleSource('runtime')
       case 'x':
         this.#events.clear()
+        this.resetSelection()
         this.resetScroll()
         return true
       default:
@@ -79,19 +80,18 @@ export class LogOverlay extends ScreenOverlay {
     const level = this.#level === 'all' ? 'all levels' : `${this.#level}+ only`
     const hidden = this.#events.recent(SCAN_LIMIT).length - this.#matching().length
     const hiddenNote = hidden > 0 ? ` · ${styleText(MUTED, `${hidden} hidden`)}` : ''
-    return ` ${styleText('bold', 'logs')} · ${sources} · ${level}${hiddenNote}${this.renderPosition()}${this.renderSearch()}`
+    return ` ${styleText('bold', 'logs')}${this.renderPosition()} · ${sources} · ${level}${hiddenNote}${this.renderSearch()}`
   }
 
   protected renderEntries(columns: number): OverlayEntry[] {
     const events = this.#matching()
-    // Sized to the locale's own time format rather than the widest possible one.
-    const timeWidth = Math.max(0, ...events.map(event => formatTime(event.time).length))
     let heading: string | undefined
     return events.map((event) => {
       const repeated = event.requestId !== undefined && event.requestId === heading
       heading = event.requestId
       return {
-        lines: formatEvent(event, columns, timeWidth, repeated),
+        key: event,
+        lines: formatEvent(event, columns, repeated),
         copy: [formatTime(event.time), event.request, event.message].filter(Boolean).join(' '),
       }
     })
@@ -100,13 +100,14 @@ export class LogOverlay extends ScreenOverlay {
   protected renderHints(columns: number): string {
     return formatHints([
       ['↑/↓', 'select'],
-      ['g/G', 'top/bottom'],
+      ['Home/End', 'top/live'],
+      ['PgUp/PgDn', 'scroll'],
       ['e', 'errors'],
       ['w', 'warnings'],
       ['a', 'all'],
-      ['c/b/r', 'cli/build/runtime'],
+      ['t/b/r', 'cli/build/runtime'],
       ['/', 'search'],
-      ['x', 'clear'],
+      ['x', 'delete logs'],
       ['y', 'copy'],
       ['Y', 'copy all'],
       ['q', 'close'],
@@ -126,6 +127,7 @@ export class LogOverlay extends ScreenOverlay {
 
   #setLevel(level: LevelFilter): boolean {
     this.#level = this.#level === level ? 'all' : level
+    this.resetSelection()
     this.resetScroll()
     return true
   }
@@ -136,6 +138,7 @@ export class LogOverlay extends ScreenOverlay {
     if (Object.values(this.#sources).every(shown => !shown)) {
       this.#sources[source] = true
     }
+    this.resetSelection()
     this.resetScroll()
     return true
   }
@@ -145,27 +148,27 @@ export function formatTime(time: number): string {
   return new Date(time).toLocaleTimeString()
 }
 
-/**
- * A log as one or more rows.
- *
- * A log emitted for a request is headed by that request, sharing the line with
- * the timestamp, and its message sits underneath at the usual message column.
- * The heading repeats whenever the request changes, keyed on the individual
- * request so two calls to the same path stay separate.
- */
-export function formatEvent(event: DevLogEvent, columns: number, timeWidth: number, sameRequest = false): string[] {
-  const messageColumn = timeWidth + 1
-  const time = styleText(MUTED, formatTime(event.time).padStart(timeWidth))
-  const tag = event.tag ? styleText(MUTED, `[${event.tag}] `) : ''
+/** Format log rows with timestamps and request headings. */
+export function formatEvent(event: DevLogEvent, columns: number, sameRequest = false): string[] {
+  const messageColumn = 9
+  const date = new Date(event.time)
+  const clock = [date.getHours(), date.getMinutes(), date.getSeconds()].map(part => String(part).padStart(2, '0')).join(':')
+  const time = styleText(MUTED, clock)
+  const budget = columns - messageColumn - 1
   const indent = ' '.repeat(messageColumn)
 
   const marker = event.repeats && event.repeats > 1 ? styleText(MUTED, ` ×${event.repeats}`) : ''
   const markerWidth = event.repeats && event.repeats > 1 ? ` ×${event.repeats}`.length : 0
 
+  const firstLineWidth = visibleWidth(event.message.split('\n', 1)[0] ?? '')
+  const tagRoom = Math.max(Math.floor(budget / 2), budget - markerWidth - firstLineWidth - 1)
+  const tag = event.tag && !event.request ? styleText(MUTED, `[${truncate(event.tag, Math.max(1, tagRoom - 2))}] `) : ''
+  const tagWidth = visibleWidth(tag)
+
   const lines = event.message
     .split('\n')
     .map((line, index) => {
-      const room = Math.max(20, columns - messageColumn - 1 - (index === 0 ? markerWidth : 0))
+      const room = Math.max(1, budget - (index === 0 ? markerWidth + tagWidth : 0))
       const text = colorBySeverity(truncate(line, room), event)
       return index === 0 ? `${text}${marker}` : text
     })

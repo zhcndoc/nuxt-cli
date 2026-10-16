@@ -5,7 +5,7 @@ import { networkInterfaces } from 'node:os'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { copyURL, formatDisplayURL, getNetworkAddresses, isReusePortSupported, listen, matchesBoundTarget, openBrowser, parsePort, resolveOpenCommand, validateHostname } from '../../src/dev/listen'
+import { copyURL, formatDisplayURL, getNetworkAddresses, isReusePortSupported, listen, matchesBoundTarget, openBrowser, parsePort, resolveOpenCommand, validateHostname, writeClipboard } from '../../src/dev/listen'
 
 const writeText = vi.hoisted(() => vi.fn())
 const isolatedEnvironment = vi.hoisted(() => ({ current: undefined as string | undefined }))
@@ -42,7 +42,7 @@ const realEnv = { ...process.env }
 /** Pretend to run on `platform`, with only the display variables in `env` set. */
 function stubEnvironment(platform: NodeJS.Platform, env: NodeJS.ProcessEnv = {}) {
   Object.defineProperty(process, 'platform', { value: platform, configurable: true })
-  process.env = { ...realEnv, DISPLAY: undefined, WAYLAND_DISPLAY: undefined, WSL_DISTRO_NAME: undefined, ...env }
+  process.env = { ...realEnv, BROWSER: undefined, DISPLAY: undefined, WAYLAND_DISPLAY: undefined, WSL_DISTRO_NAME: undefined, ...env }
 }
 
 function restoreEnvironment() {
@@ -443,6 +443,27 @@ describe('listener.close', () => {
   })
 })
 
+describe('writeClipboard', () => {
+  afterEach(() => {
+    restoreEnvironment()
+    vi.clearAllMocks()
+  })
+
+  it('should not reach for a clipboard tool without a display server on linux', async () => {
+    stubEnvironment('linux')
+
+    await expect(writeClipboard('text')).resolves.toBe(false)
+    expect(writeText).not.toHaveBeenCalled()
+  })
+
+  it('should resolve false rather than throw when the write fails', async () => {
+    stubEnvironment('darwin')
+    writeText.mockRejectedValueOnce(new Error('no clipboard tool found'))
+
+    await expect(writeClipboard('text')).resolves.toBe(false)
+  })
+})
+
 describe('copyURL', () => {
   afterEach(() => {
     restoreEnvironment()
@@ -472,13 +493,6 @@ describe('copyURL', () => {
 
     expect(writeText).toHaveBeenCalledWith('http://localhost:3000/')
   })
-
-  it('should warn rather than throw when copying fails', async () => {
-    stubEnvironment('darwin')
-    writeText.mockRejectedValueOnce(new Error('no clipboard tool found'))
-
-    await expect(copyURL('http://localhost:3000/')).resolves.toBeUndefined()
-  })
 })
 
 describe('openBrowser', () => {
@@ -501,5 +515,13 @@ describe('openBrowser', () => {
     openBrowser('http://localhost:3000/')
 
     expect(spawn).toHaveBeenCalledWith('xdg-open', ['http://localhost:3000/'], expect.anything())
+  })
+
+  it('should spawn `BROWSER` without a display server', () => {
+    stubEnvironment('linux', { BROWSER: '/home/user/.vscode-server/bin/helpers/browser.sh' })
+
+    openBrowser('http://localhost:3000/')
+
+    expect(spawn).toHaveBeenCalledWith('/home/user/.vscode-server/bin/helpers/browser.sh', ['http://localhost:3000/'], expect.anything())
   })
 })

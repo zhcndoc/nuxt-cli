@@ -1,4 +1,4 @@
-styles: cbc7a29b1cebf5be
+styles: 8060c8131f1b5f10
    Local   http://localhost:3000/
    Local   http://localhost:3000/ ⠋
    waiting for requests
@@ -8,6 +8,7 @@ styles: cbc7a29b1cebf5be
    ━━━━━━━━━━━━━━━━━━━━ 50% · 42 ms
    ━━━━━━━━━━━━━━━━━━━━ 67% · 42 ms
    ━━━━━━━━━━━━━━━━━━━━ 83% · 42 ms
+   ⚠ 1 warning
   BUILDING   building server
   BUILDING   bundling app
   BUILDING   compiling changes
@@ -23,6 +24,7 @@ styles: cbc7a29b1cebf5be
   STARTING   preparing your app
   STARTING   setting up modules
   STARTING   starting Nuxt...
+ o open · i info · l logs · n network · p routes · ? help · q quit
  r restart · o open · i info · l logs · n network · p routes · ? help · q quit
  ⣠⣦⣠⡀  Nuxt x.y.z
  ⣠⣦⣠⡀  Nuxt x.y.z                                                                ready in 42 ms

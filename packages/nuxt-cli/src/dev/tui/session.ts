@@ -1,6 +1,6 @@
 import type { ProgressSnapshot } from '../../utils/progress-snapshot'
 import type { ListenURL } from '../listen'
-import type { DevLogEvent } from './events'
+import type { DevLogEvent, PrintedLog } from './events'
 import type { PanelStart, PanelStartOptions } from './first-frame'
 import type { PanelState } from './panel'
 
@@ -10,41 +10,25 @@ import { formatWithOptions, styleText } from 'node:util'
 import { consola } from 'consola'
 
 import { KEEPS_PROCESS_ALIVE } from '../../utils/errors'
+import { stripAnsi } from '../../utils/formatting'
 import { debug, isEmittingCliLog, setLoggerImpl } from '../../utils/logger'
-import { getPkgVersion } from '../../utils/pkg'
 import { READY_MESSAGE } from '../../utils/progress-snapshot'
 import { startupElapsedMs } from '../../utils/startup-clock'
 import { registerTerminalHost } from '../../utils/terminal-host'
-import { currentRequest, isServingRequest } from '../serving-state'
+import { currentRequest } from '../serving-state'
 import { isShutdownAdopted } from '../shutdown'
 import { queryBackground } from './background'
 import { DevEventLog, isBoxedNotice, normaliseMessage, noteRoute } from './events'
-import { createPanelState, renderPanelState } from './first-frame'
+import { createPanelState, renderPanelState, resolveNuxtVersion } from './first-frame'
 import { LOGO_FRAME_MS } from './logo'
 import { describeListenURLs } from './panel'
 import { resolveDevUISupport } from './support'
 import { PanelSurface } from './surface'
-import { stripAnsi } from './width'
 
 const SHOW_CURSOR = '\u001B[?25h'
 
 /** Long enough for a forwarded log to be paired with its printed output. */
 const ERROR_SURFACE_DELAY_MS = 60
-
-/** An error as it belongs in scrollback: as printed, or as reported. */
-function renderErrorLine(event: DevLogEvent): string {
-  return event.rendered ?? `${styleText(['red', 'bold'], 'ERROR')} ${event.message}`
-}
-
-/** A boxed notice as it belongs in scrollback: as printed, or as reported. */
-function renderNoticeBlock(event: DevLogEvent): string {
-  return event.rendered ?? `${event.message}\n`
-}
-
-/** A warning as it belongs in scrollback: as printed, or as reported. */
-function renderWarningLine(event: DevLogEvent): string {
-  return event.rendered ?? `${styleText(['yellow', 'bold'], 'WARN')} ${event.message}`
-}
 
 /** Cursor movement and erasure: output that repaints rather than appends. */
 // eslint-disable-next-line no-control-regex
@@ -53,11 +37,6 @@ const REWRITE_RE = /\r(?!\n)|\u001B\[[0-9;]*[A-GJK]/
 /** Sequences a settled line no longer needs: movement, erasure, visibility. */
 // eslint-disable-next-line no-control-regex
 const CURSOR_RE = /\u001B\[[0-9;]*[A-GJK]|\u001B\[\?25[hl]/g
-
-/** Whether `chunk` rewrites earlier output instead of adding to it. */
-function isRewrite(chunk: string): boolean {
-  return REWRITE_RE.test(chunk)
-}
 
 /**
  * What a run of self-rewriting output leaves on screen: each line keeps only
@@ -69,6 +48,50 @@ function settleRewrites(plain: string): string {
     .split('\n')
     .map(line => line.slice(line.lastIndexOf('\r') + 1))
     .join('\n')
+}
+
+/** How a printed log opens: a `[tag]`, a consola badge, or a consola icon or its non-unicode fallback. */
+const LOG_START_RE = /^(?:\[[^\]\s]+\]\s| (?:FATAL|ERROR|WARN) {2}|[\u2139\u2714\u2716\u26A0\u2699\u2192\u25D0\u221A\u00D7\u203C] )/
+
+/** A badge, which consola prints with a blank line on either side. */
+const FRAMED_RE = /^(?:\[[^\]\s]+\] )? (?:FATAL|ERROR|WARN) {2}/
+
+/**
+ * Split printed output into logs. A line that does not open a log, such as a
+ * stack frame, continues the one above. The `rendered` parts concatenate back
+ * to `chunk`.
+ */
+function splitLogs(chunk: string): PrintedLog[] {
+  const logs: Array<{ plain: string[], rendered: string }> = []
+  let blanks: string[] = []
+  for (const line of chunk.match(/[^\n]*\n|[^\n]+$/g) ?? []) {
+    const plain = stripAnsi(line).replace(/\n$/, '')
+    if (!plain.trim()) {
+      blanks.push(line)
+      continue
+    }
+    const last = logs.at(-1)
+    if (last && !LOG_START_RE.test(plain)) {
+      if (blanks.length) {
+        last.plain.push('')
+      }
+      last.plain.push(plain)
+      last.rendered += blanks.join('') + line
+    }
+    else {
+      const own = !last ? blanks.length : FRAMED_RE.test(plain) ? Math.min(1, blanks.length) : 0
+      if (last) {
+        last.rendered += blanks.slice(0, blanks.length - own).join('')
+      }
+      logs.push({ plain: [plain], rendered: blanks.slice(blanks.length - own).join('') + line })
+    }
+    blanks = []
+  }
+  const last = logs.at(-1)
+  if (last) {
+    last.rendered += blanks.join('')
+  }
+  return logs.map(log => ({ message: log.plain.join('\n'), rendered: log.rendered }))
 }
 
 export interface DevUISession {
@@ -312,11 +335,11 @@ export function beginDevUI(options: PanelStartOptions & { start?: PanelStart } =
   }
 
   /**
-   * Fold everything captured since the last log event into one entry.
+   * Record everything captured since the last log event.
    *
    * A single log can reach the stream as several writes, so chunks are
-   * accumulated and only split apart where a new log event begins or the tick
-   * ends.
+   * accumulated until a new log event begins or the tick ends, and only then
+   * split into logs.
    */
   function flushCapture(): void {
     const chunk = buffered
@@ -326,14 +349,21 @@ export function beginDevUI(options: PanelStartOptions & { start?: PanelStart } =
     if (!chunk) {
       return
     }
-    const plain = stripAnsi(chunk)
+    const rewriting = REWRITE_RE.test(chunk)
     if (owner) {
       transient = undefined
-      owner.rendered = chunk
-      noteRoute(owner, 'output')
+      const rest = events.attachRendered(rewriting ? [] : splitLogs(chunk), owner)
+      if (owner.rendered === undefined) {
+        owner.rendered = chunk
+        noteRoute(owner, 'output')
+        return
+      }
+      for (const log of rest) {
+        record(log.message, log.rendered)
+      }
       return
     }
-    const rewriting = isRewrite(chunk)
+    const plain = stripAnsi(chunk)
     const message = (rewriting ? settleRewrites(plain) : plain).replace(/\n+$/, '')
     if (!message.trim()) {
       return
@@ -345,35 +375,39 @@ export function beginDevUI(options: PanelStartOptions & { start?: PanelStart } =
       Object.assign(transient, { time: Date.now(), message, rendered: chunk })
       return
     }
-    if (!rewriting && events.attachRendered(chunk, plain)) {
-      transient = undefined
+    if (rewriting) {
+      // Only an entry of this run's own may be rewritten by its later frames:
+      // `push` can merge into an existing structured event, whose message is a
+      // real log that has to survive.
+      transient = record(message, chunk)
       return
     }
+    transient = undefined
+    for (const log of events.attachRendered(splitLogs(chunk))) {
+      record(log.message, log.rendered)
+    }
+  }
+
+  /** Record printed output, returning the entry unless it merged into another. */
+  function record(message: string, rendered: string): DevLogEvent | undefined {
+    const request = currentRequest()
     const event: DevLogEvent = {
       time: Date.now(),
       level: 2,
       type: 'log',
       message,
-      rendered: chunk,
-      source: isServingRequest() ? 'runtime' : 'build',
-      request: currentRequest()?.label,
-      requestId: currentRequest()?.id,
+      rendered,
+      source: request ? 'runtime' : 'build',
+      request: request?.label,
+      requestId: request?.id,
     }
-    const stored = events.push(event, { route: 'output' })
-    // Only an entry of this run's own may be rewritten by its later frames:
-    // `push` can merge into an existing structured event, whose message is a
-    // real log that has to survive.
-    transient = rewriting && stored === event ? stored : undefined
+    return events.push(event, { route: 'output' }) === event ? event : undefined
   }
 
-  /**
-   * Write text into scrollback above the panel, once the event it was rendered
-   * from has had time to be paired with its printed form.
-   *
-   * Delayed by a beat because a log forwarded from a fork arrives before the
-   * output that renders it, and the rendered form is what should be shown.
-   */
-  function surfaceLater(render: () => string): void {
+  // Deferred: a forwarded log arrives before its printed form.
+  function surfaceLater(event: DevLogEvent, fallback: string): void {
+    event.surfaced = true
+    const render = () => event.rendered ?? fallback
     const timer: NodeJS.Timeout = setTimeout(() => {
       pendingSurfaces.delete(timer)
       surfaceText(render())
@@ -382,53 +416,32 @@ export function beginDevUI(options: PanelStartOptions & { start?: PanelStart } =
     pendingSurfaces.set(timer, render)
   }
 
-  function surfaceError(event: DevLogEvent): void {
-    // Once the server has been ready, errors belong to the panel's badge and the
-    // log view. Before that, one may be the last thing the process ever says.
+  // Boxed notices always reach scrollback; errors and CLI warnings only before first ready.
+  function surfaceEvent(event: DevLogEvent): void {
+    const text = normaliseMessage(event.message)
+    if (event.surfaced || !text) {
+      return
+    }
+    if (isBoxedNotice(event)) {
+      return surfaceLater(event, `${event.message}\n`)
+    }
     if (state.readyMs !== undefined) {
       return
     }
-    const text = normaliseMessage(event.message)
     // A watcher that keeps failing the same way should say so once.
-    if (event.surfaced || !text || text === lastSurfacedError) {
-      return
+    if (event.level <= 0 && text !== lastSurfacedError) {
+      lastSurfacedError = text
+      surfaceLater(event, `${styleText(['red', 'bold'], 'ERROR')} ${event.message}`)
     }
-    event.surfaced = true
-    lastSurfacedError = text
-    surfaceLater(() => renderErrorLine(event))
-  }
-
-  /**
-   * Write a warning the CLI raised during startup into scrollback above the
-   * panel. The panel holds a badge for it, but a badge has one truncated line
-   * and these run to a sentence or two.
-   */
-  function surfaceWarning(event: DevLogEvent): void {
-    if (event.surfaced || state.readyMs !== undefined || !normaliseMessage(event.message)) {
-      return
+    else if (event.level === 1 && event.source === 'cli') {
+      surfaceLater(event, `${styleText(['yellow', 'bold'], 'WARN')} ${event.message}`)
     }
-    event.surfaced = true
-    surfaceLater(() => renderWarningLine(event))
-  }
-
-  /**
-   * Write a boxed notice into scrollback above the panel, at any point in the
-   * session: it carries something (a URL, a token) that has to be readable and
-   * selectable, which a status line cannot offer.
-   */
-  function surfaceNotice(event: DevLogEvent): void {
-    // Repeats within the dedupe window are merged into the entry already shown;
-    // a later request is news again, and has to be answered again.
-    if (event.surfaced || !normaliseMessage(event.message)) {
-      return
-    }
-    event.surfaced = true
-    surfaceLater(() => renderNoticeBlock(event))
   }
 
   const reporter = {
     log(logObj: { level: number, type: string, tag?: string, args: unknown[] }) {
       const cli = isEmittingCliLog()
+      const request = cli ? undefined : currentRequest()
       expectRender(events.push({
         time: Date.now(),
         level: logObj.level,
@@ -438,9 +451,9 @@ export function beginDevUI(options: PanelStartOptions & { start?: PanelStart } =
         // The app, the build and the CLI share this consola instance on one
         // thread, so origin is inferred: the CLI marks its own calls, and
         // anything logged while a request is open belongs to the runtime.
-        source: cli ? 'cli' : isServingRequest() ? 'runtime' : 'build',
-        request: cli ? undefined : currentRequest()?.label,
-        requestId: cli ? undefined : currentRequest()?.id,
+        source: cli ? 'cli' : request ? 'runtime' : 'build',
+        request: request?.label,
+        requestId: request?.id,
       }, {
         // A log the CLI wrote itself reaches the UI no other way.
         route: cli ? undefined : 'reporter',
@@ -497,17 +510,7 @@ export function beginDevUI(options: PanelStartOptions & { start?: PanelStart } =
     onTeardown: task => void teardownTasks.push(task),
   }
 
-  events.onEvent((event) => {
-    if (isBoxedNotice(event)) {
-      surfaceNotice(event)
-    }
-    else if (event.level <= 0) {
-      surfaceError(event)
-    }
-    else if (event.level === 1 && event.source === 'cli') {
-      surfaceWarning(event)
-    }
-  })
+  events.onEvent(surfaceEvent)
 
   consola.addReporter(reporter)
 
@@ -563,6 +566,7 @@ export function beginDevUI(options: PanelStartOptions & { start?: PanelStart } =
     ['exit', onSignal],
     ['SIGINT', onInterrupt(130)],
     ['SIGTERM', onInterrupt(143)],
+    ['SIGQUIT', onInterrupt(131)],
     ['SIGHUP', onHangup],
     // Raw mode and a pinned panel would otherwise outlive the crash: node
     // prints the error and exits without unwinding through `exit` first.
@@ -574,8 +578,7 @@ export function beginDevUI(options: PanelStartOptions & { start?: PanelStart } =
 
   current = session
   retargetCurrent = (next) => {
-    const nextCwd = next.cwd || cwd
-    const version = next.version || getPkgVersion(nextCwd, 'nuxt') || getPkgVersion(nextCwd, 'nuxt-nightly') || undefined
+    const version = resolveNuxtVersion({ version: next.version, cwd: next.cwd || cwd })
     if (version === state.version) {
       return
     }

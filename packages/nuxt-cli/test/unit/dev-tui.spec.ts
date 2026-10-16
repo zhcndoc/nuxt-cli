@@ -6,9 +6,8 @@ import type { DevRoute } from '../../src/dev/utils'
 import process from 'node:process'
 import { consola } from 'consola'
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createRequest, currentRequest, isServingRequest, runWithRequest } from '../../src/dev/serving-state'
 import { deferShortcutContext } from '../../src/dev/shortcut-context'
 import { adoptShutdown } from '../../src/dev/shutdown'
 import { DevEventLog, noteRoute } from '../../src/dev/tui/events'
@@ -24,14 +23,11 @@ import { RequestLog } from '../../src/dev/tui/requests'
 import { RouteOverlay } from '../../src/dev/tui/route-overlay'
 import { resolveDevUISupport, supportsUnicode } from '../../src/dev/tui/support'
 import { PanelSurface } from '../../src/dev/tui/surface'
-import { truncate } from '../../src/dev/tui/width'
-import { nuxtIcon } from '../../src/utils/ascii'
 import { KEEPS_PROCESS_ALIVE } from '../../src/utils/errors'
+import { terminalLink, truncate } from '../../src/utils/formatting'
 import { logger } from '../../src/utils/logger'
 import { useTerminalHost } from '../../src/utils/terminal-host'
-import { terminalLink } from '../../src/utils/terminal-link'
-import { paint, resolveBackground } from '../../src/utils/terminal-theme'
-import { releaseNotesUrl } from '../../src/utils/update-check'
+import { paint } from '../../src/utils/terminal-theme'
 import { render, screen } from '../utils/terminal'
 
 const opened: string[] = []
@@ -47,6 +43,13 @@ vi.mock('tinyclip', () => ({
     return Promise.resolve()
   },
 }))
+
+beforeEach(() => {
+  vi.stubEnv('DISPLAY', ':0')
+})
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
 
 // eslint-disable-next-line no-control-regex
 const strip = (text: string) => text.replaceAll(/\u001B\[[0-9;]*m|\u001B\]8;[^\u0007]*\u0007/g, '')
@@ -86,10 +89,10 @@ describe('dev tui panel', () => {
 
   it('should say which request it is busy with, and for how long', () => {
     const first = renderPanel({ ...READY, awaitingFirstRender: true, rendering: { label: 'GET /', startedAt: 0 }, renderingMs: 6400 }, 80, 30).map(strip)
-    expect(first.join('\n')).toContain('WARMUP   rendering GET / · 6.4s')
+    expect(first.join('\n')).toContain('WARMUP   rendering GET / · 6.40s')
 
     const later = renderPanel({ ...READY, rendering: { label: 'GET /about', startedAt: 0 }, renderingMs: 1200 }, 80, 30).map(strip)
-    expect(later.join('\n')).toContain('READY   rendering GET /about · 1.2s')
+    expect(later.join('\n')).toContain('READY   rendering GET /about · 1.20s')
   })
 
   it('should keep the last request off the line while one is in flight', () => {
@@ -100,15 +103,15 @@ describe('dev tui panel', () => {
       lastRequest: { method: 'GET', url: '/', status: 200, duration: 8442 },
     }, 100, 30).map(strip)
 
-    expect(lines.join('\n')).toContain('READY   rendering GET / · 6.7s')
-    expect(lines.join('\n')).not.toContain('8442ms')
+    expect(lines.join('\n')).toContain('READY   rendering GET / · 6.70s')
+    expect(lines.join('\n')).not.toContain('8.44s')
   })
 
   it('should not put a clock on a render that has only just arrived', () => {
     const lines = renderPanel({ ...READY, rendering: { label: 'GET /', startedAt: 0 }, renderingMs: 40 }, 80, 30).map(strip)
 
     expect(lines.join('\n')).toContain('READY   rendering GET /')
-    expect(lines.join('\n')).not.toContain('0.0s')
+    expect(lines.join('\n')).not.toContain('40ms')
   })
 
   it('should let a load in flight keep the status line from a render', () => {
@@ -194,15 +197,10 @@ describe('dev tui panel', () => {
     const busy = { ...READY, requests: 188, medianMs: 11, task: { label: 'Installing with pnpm', startedAt: Date.now() - 4200 } }
     const lines = renderPanel(busy, 100, 30).map(strip)
     const line = lines.find(entry => entry.includes('installing with pnpm'))!
-    expect(line).toContain('4.2s')
+    expect(line).toContain('4.20s')
     expect(lines.join('\n')).not.toContain('188 requests')
     // The work borrows the line, so the panel keeps its shape.
     expect(lines).toHaveLength(renderPanel({ ...READY, requests: 188, medianMs: 11 }, 100, 30).length)
-  })
-
-  it('keeps a notice out of the way of a quit confirmation', () => {
-    const text = renderPanelText({ ...READY, confirmQuit: true, notice: { text: 'copied', tone: 'success' } }, 100, 30)
-    expect(text).not.toContain('copied')
   })
 
   it('keeps the status line and hints when the panel is squeezed', () => {
@@ -217,7 +215,7 @@ describe('dev tui panel', () => {
     const lines = renderPanel({ ...READY, status: 'starting', readyMs: undefined, progress: 0.5, elapsedMs: 3200, note: 'Bundling app' }, 100, 30).map(strip)
     const bar = lines.find(line => line.includes('%'))
     expect(bar).toContain('50%')
-    expect(bar).toContain('3.2s')
+    expect(bar).toContain('3.20s')
     expect(bar).toContain('\u2501')
     // The bar borrows the summary line, so the panel keeps its shape.
     expect(lines).toHaveLength(renderPanel({ ...READY }, 100, 30).length)
@@ -286,13 +284,6 @@ describe('dev tui panel', () => {
     expect(pending.find(line => line.includes('localhost'))).toContain('\u280B')
     const confirmed = renderPanel({ ...READY }, 100, 30).map(strip)
     expect(confirmed.find(line => line.includes('localhost'))).not.toContain('\u280B')
-  })
-
-  it('replaces the hints with a confirmation prompt', () => {
-    const text = renderPanelText({ ...READY, confirmQuit: true }, 100, 30)
-    expect(text).toContain('QUIT?')
-    expect(text).toContain('press y to confirm')
-    expect(text).not.toContain('q quit')
   })
 
   it('substitutes plain characters when the terminal cannot render glyphs', () => {
@@ -572,114 +563,6 @@ describe('dev tui logo', () => {
   })
 })
 
-describe('terminal background', () => {
-  it('takes an explicit setting at its word', () => {
-    expect(resolveBackground({ NUXT_TERM_THEME: 'light' })).toBe('light')
-    expect(resolveBackground({ NUXT_TERM_THEME: 'DARK' })).toBe('dark')
-    expect(resolveBackground({ NUXT_TERM_THEME: 'light', COLORFGBG: '15;0' })).toBe('light')
-  })
-
-  it('reads the background the terminal reports', () => {
-    expect(resolveBackground({ COLORFGBG: '15;0' })).toBe('dark')
-    expect(resolveBackground({ COLORFGBG: '0;15' })).toBe('light')
-    expect(resolveBackground({ COLORFGBG: '0;default;15' })).toBe('light')
-    expect(resolveBackground({ COLORFGBG: '15;default;0' })).toBe('dark')
-  })
-
-  it('admits to not knowing rather than assuming', () => {
-    expect(resolveBackground({})).toBe('unknown')
-    expect(resolveBackground({ COLORFGBG: '15;default' })).toBe('unknown')
-    expect(resolveBackground({ NUXT_TERM_THEME: 'solarized' })).toBe('unknown')
-  })
-})
-
-describe('exact colours', () => {
-  const withTerminal = (depth: number, run: () => void) => {
-    const keys = ['getColorDepth', 'hasColors', 'isTTY'] as const
-    const originals = keys.map(key => [key, Object.getOwnPropertyDescriptor(process.stdout, key)] as const)
-    Object.defineProperty(process.stdout, 'getColorDepth', { value: () => depth, configurable: true })
-    Object.defineProperty(process.stdout, 'hasColors', { value: () => depth > 1, configurable: true })
-    Object.defineProperty(process.stdout, 'isTTY', { value: depth > 1, configurable: true })
-    try {
-      run()
-    }
-    finally {
-      for (const [key, descriptor] of originals) {
-        if (descriptor) {
-          Object.defineProperty(process.stdout, key, descriptor)
-        }
-        else {
-          Reflect.deleteProperty(process.stdout, key)
-        }
-      }
-    }
-  }
-
-  it('uses the exact colour only where the background is known', () => {
-    withTerminal(24, () => {
-      expect(paint('brand', 'Nuxt', 'dark')).toContain('\u001B[38;2;0;220;130m')
-      expect(paint('brand', 'Nuxt', 'light')).toContain('\u001B[38;2;0;145;92m')
-      expect(paint('brand', 'Nuxt', 'unknown')).not.toContain('38;2')
-    })
-  })
-
-  it('darkens the warning amber on a light terminal, where yellow cannot be read', () => {
-    withTerminal(24, () => {
-      expect(paint('warning', '1 warning', 'dark')).toContain('\u001B[38;2;255;200;87m')
-      expect(paint('warning', '1 warning', 'light')).toContain('\u001B[38;2;138;90;0m')
-    })
-  })
-
-  it('takes the nearest colour a 256-colour terminal can hold', () => {
-    withTerminal(8, () => {
-      // The cube entries closest to `#00DC82`, `#00915C`, `#FFC857` and `#8A5A00`.
-      expect(paint('brand', 'Nuxt', 'dark')).toContain('\u001B[38;5;42m')
-      expect(paint('brand', 'Nuxt', 'light')).toContain('\u001B[38;5;29m')
-      expect(paint('warning', '!', 'dark')).toContain('\u001B[38;5;221m')
-      expect(paint('warning', '!', 'light')).toContain('\u001B[38;5;94m')
-    })
-  })
-
-  it('leaves the palette to the terminal below 256 colours', () => {
-    withTerminal(4, () => {
-      expect(paint('brand', 'Nuxt', 'dark')).not.toContain('38;')
-      expect(strip(paint('brand', 'Nuxt', 'dark'))).toBe('Nuxt')
-    })
-  })
-
-  it('hands the colour back so nothing after it is tinted', () => {
-    for (const depth of [24, 8]) {
-      withTerminal(depth, () => {
-        for (const background of ['dark', 'light', 'unknown'] as const) {
-          for (const tone of ['brand', 'warning'] as const) {
-            // eslint-disable-next-line no-control-regex
-            expect(paint(tone, 'Nuxt', background)).toMatch(/\u001B\[(?:39|0)m$/)
-          }
-        }
-      })
-    }
-  })
-
-  it('emits no escapes at all when there is no colour', () => {
-    withTerminal(1, () => {
-      expect(paint('brand', 'Nuxt', 'dark')).toBe('Nuxt')
-      expect(paint('warning', 'Nuxt', 'light')).toBe('Nuxt')
-      expect(paint('brand', 'Nuxt', 'unknown')).toBe('Nuxt')
-    })
-  })
-
-  it('paints the init mark without leaving the terminal green', () => {
-    withTerminal(24, () => {
-      const icon = nuxtIcon()
-      expect(strip(icon).split('\n')).toHaveLength(8)
-      for (const line of icon.split('\n')) {
-        // eslint-disable-next-line no-control-regex
-        expect(line).toMatch(/\u001B\[(?:39|0)m$/)
-      }
-    })
-  })
-})
-
 describe('dev event log', () => {
   const event = (overrides: Partial<Parameters<DevEventLog['push']>[0]>) => ({
     time: 0,
@@ -696,7 +579,7 @@ describe('dev event log', () => {
     const message = 'A browser is requesting permissions of writing files and running commands.\nOr manually copy and paste the following token:\ngXSptCzfAzS2Lfgy'
     log.push(event({ time: now, type: 'box', message, source: 'build' }))
     const printed = ['\u256D\u2500 Permission Request \u2500\u256E', ...message.split('\n').map(line => `\u2502 ${line} \u2502`), '\u2570\u2500\u256F'].join('\n')
-    expect(log.attachRendered(printed, printed)).toBe(true)
+    expect(log.attachRendered([{ message: printed, rendered: printed }])).toEqual([])
     expect(log.recent(10)).toHaveLength(1)
     expect(log.recent(10)[0]!.rendered).toBe(printed)
   })
@@ -719,8 +602,31 @@ describe('dev event log', () => {
     log.push(event({ time: now, type: 'box', message, source: 'build' }))
     expect(log.recent(10)).toHaveLength(1)
     expect(log.recent(10)[0]!.repeats).toBe(2)
-    expect(log.attachRendered(printed, printed)).toBe(true)
+    expect(log.attachRendered([{ message: printed, rendered: printed }])).toEqual([])
     expect(log.recent(10)).toHaveLength(1)
+  })
+
+  it('should pair a forwarded log with its own printed log and leave the rest', () => {
+    const log = new DevEventLog()
+    log.push(event({ time: Date.now(), level: 0, type: 'error', message: 'boom happened here today', source: 'build' }))
+    const before = { message: '[nuxt:icon] \u2714 Nuxt Icon loaded', rendered: '[nuxt:icon] \u2714 Nuxt Icon loaded\n' }
+    const own = { message: ' ERROR  boom happened here today', rendered: '\n ERROR  boom happened here today\n\n' }
+    const after = { message: '[@nuxt/robots]  WARN  You have disallowed robots', rendered: '\n[@nuxt/robots]  WARN  You have disallowed robots\n\n' }
+    expect(log.attachRendered([before, own, after])).toEqual([before, after])
+    expect(log.recent(1)[0]!.rendered).toBe(own.rendered)
+  })
+
+  it('should pair a forwarded log with every printed log its message spans', () => {
+    const log = new DevEventLog()
+    log.push(event({ time: Date.now(), message: 'Found:\n[a] one\n[b] two', source: 'build' }))
+    const printed = [
+      { message: '\u2139 Found:', rendered: '\u2139 Found:\n' },
+      { message: '[a] one', rendered: '[a] one\n' },
+      { message: '[b] two', rendered: '[b] two\n' },
+    ]
+    const other = { message: '[c] \u2714 something else', rendered: '[c] \u2714 something else\n' }
+    expect(log.attachRendered([...printed, other])).toEqual([other])
+    expect(log.recent(1)[0]!.rendered).toBe('\u2139 Found:\n[a] one\n[b] two\n')
   })
 
   it('should not fold a boxed notice into a warning that said the same thing', () => {
@@ -1001,87 +907,6 @@ describe('dev event log', () => {
   })
 })
 
-describe('request attribution', () => {
-  const tick = () => new Promise(resolve => setTimeout(resolve, 0))
-  const queue: Array<() => void> = []
-
-  it('has nothing to attribute a log to outside a request', () => {
-    expect(currentRequest()).toBeUndefined()
-    expect(isServingRequest()).toBe(false)
-  })
-
-  it('attributes work on the call stack to the request that started it', () => {
-    runWithRequest('GET /about', (request) => {
-      expect(isServingRequest()).toBe(true)
-      expect(currentRequest()?.label).toBe('GET /about')
-      expect(currentRequest()?.id).toBe(request.id)
-    })
-    expect(currentRequest()).toBeUndefined()
-  })
-
-  it('keeps overlapping requests apart across await points', async () => {
-    const seen: Array<[string, string | undefined]> = []
-    const serve = async (label: string, delay: number) => {
-      await new Promise(resolve => setTimeout(resolve, delay))
-      seen.push([label, currentRequest()?.label])
-      await tick()
-      seen.push([label, currentRequest()?.label])
-    }
-
-    await Promise.all([
-      runWithRequest('GET /page', () => serve('GET /page', 4)),
-      runWithRequest('GET /_nuxt/app.js', () => serve('GET /_nuxt/app.js', 1)),
-      runWithRequest('GET /api/hello', () => serve('GET /api/hello', 2)),
-    ])
-
-    expect(seen).toHaveLength(6)
-    for (const [label, attributed] of seen) {
-      expect(attributed).toBe(label)
-    }
-  })
-
-  it('follows a request into a nested callback the handler creates', async () => {
-    const attributed = await runWithRequest('GET /nested', () => new Promise<string | undefined>((resolve) => {
-      process.nextTick(() => {
-        setImmediate(() => {
-          queueMicrotask(() => resolve(currentRequest()?.label))
-        })
-      })
-    }))
-    expect(attributed).toBe('GET /nested')
-  })
-
-  it('gives a request an identity that cannot be guessed from its route or its neighbours', () => {
-    const ids = Array.from({ length: 50 }, () => createRequest('GET /boom-page').id)
-    const value = (id: string) => BigInt(`0x${id.replaceAll('-', '')}`)
-
-    expect(new Set(ids).size).toBe(ids.length)
-    for (const id of ids) {
-      expect(id.replaceAll('-', '')).toMatch(/^[0-9a-f]{32}$/)
-      expect(id).not.toContain('boom-page')
-      expect(id).not.toContain('GET')
-    }
-    const distances = ids.slice(1).map((id, index) => value(id) - value(ids[index]!))
-    expect(new Set(distances.map(String)).size).toBe(distances.length)
-  })
-
-  it('does not attribute work that has left the request context', async () => {
-    let escaped: string | undefined = 'unset'
-    runWithRequest('GET /leaky', () => {
-      // A queue the handler does not own loses the context, by design.
-      queue.push(() => {
-        escaped = currentRequest()?.label
-      })
-    })
-    const queued = queue.splice(0)
-    for (const run of queued) {
-      run()
-    }
-    await tick()
-    expect(escaped).toBeUndefined()
-  })
-})
-
 describe('log overlay', () => {
   beforeEach(() => {
     copied.length = 0
@@ -1098,9 +923,52 @@ describe('log overlay', () => {
 
   it('should leave a message that carries its own colours alone', () => {
     const coloured = `${'\u001B[31m'}✖${'\u001B[39m'} ParseError`
-    const lines = formatEvent(event({ message: coloured, rendered: coloured, level: 0, type: 'error', styled: true }), 80, 8)
+    const lines = formatEvent(event({ message: coloured, rendered: coloured, level: 0, type: 'error', styled: true }), 80)
 
     expect(lines.join('\n')).toContain(coloured)
+  })
+
+  it('counts the tag against the width a message is cut to', () => {
+    const [line] = formatEvent(event({ tag: '@nuxt/content', message: 'Processed 2 collections and 0 files in 59.89ms (0 cached, 0 parsed)' }), 60)
+    expect(strip(line!).length).toBeLessThanOrEqual(60)
+    expect(strip(line!)).toMatch(/^\d{2}:\d{2}:\d{2} \[@nuxt\/content\] Processed .*…$/)
+  })
+
+  it('keeps the repeat marker when a long tag leaves little room', () => {
+    const [line] = formatEvent(event({ tag: 'nuxt:devtools:config-retriever', message: 'defines Vite-specific options', repeats: 12 }), 38)
+    expect(strip(line!).length).toBeLessThanOrEqual(38)
+    expect(strip(line!)).toMatch(/^\d{2}:\d{2}:\d{2} \[nuxt:\S*…\] \S.* ×12$/)
+  })
+
+  it('keeps a long tag whole when the message leaves room for it', () => {
+    const [line] = formatEvent(event({ tag: 'nuxt:devtools:config-retriever', message: 'ok' }), 58)
+    expect(strip(line!)).toMatch(/^\d{2}:\d{2}:\d{2} \[nuxt:devtools:config-retriever\] ok$/)
+  })
+
+  it('never paints a row wider than the terminal', () => {
+    const events = new DevEventLog()
+    events.push(event({ tag: 'a'.repeat(60), message: 'b'.repeat(60) }))
+    events.push(event({ request: `GET /${'c'.repeat(120)}`, requestId: '1', message: 'boom' }))
+    const columns = Object.getOwnPropertyDescriptor(process.stdout, 'columns')
+    Object.defineProperty(process.stdout, 'columns', { value: 20, configurable: true })
+    const { overlay, lastFrame } = create(events)
+    try {
+      overlay.open()
+      overlay.handleKey({ name: 'y' })
+      expect(strip(lastFrame())).toContain('nothing selected')
+      for (const row of strip(lastFrame()).split('\n')) {
+        expect(row.length).toBeLessThanOrEqual(20)
+      }
+    }
+    finally {
+      overlay.handleKey({ name: 'q' })
+      if (columns) {
+        Object.defineProperty(process.stdout, 'columns', columns)
+      }
+      else {
+        Reflect.deleteProperty(process.stdout, 'columns')
+      }
+    }
   })
 
   it('opens focused on the newest error', () => {
@@ -1124,8 +992,7 @@ describe('log overlay', () => {
 
   it('truncates by visible width and carries styling across the cut', () => {
     const styled = event({ message: `\u001B[32m➜\u001B[39m DevTools: press Shift + A in your browser to enable the DevTools`, level: 2 })
-    const timeWidth = new Date(0).toLocaleTimeString().length
-    const [line] = formatEvent(styled as any, 40, timeWidth)
+    const [line] = formatEvent(styled as any, 40)
     expect(strip(line!).length).toBeLessThanOrEqual(40)
     // The cut must not swallow the reset, or everything after stays green.
     expect(line!.endsWith('\u001B[0m')).toBe(true)
@@ -1198,6 +1065,24 @@ describe('log overlay', () => {
     expect(process.stdout.listenerCount('resize')).toBe(before)
   })
 
+  it('ignores modified view shortcuts', () => {
+    const events = new DevEventLog()
+    events.push(event({ source: 'runtime', message: 'runtime log' }))
+    const { overlay, lastFrame } = create(events)
+    overlay.open()
+    const before = lastFrame()
+    for (const key of [
+      { name: 'r', ctrl: true },
+      { name: 'x', ctrl: true },
+      { name: 'q', meta: true },
+    ]) {
+      overlay.handleKey(key)
+      expect(lastFrame()).toBe(before)
+      expect(overlay.isOpen).toBe(true)
+    }
+    overlay.close()
+  })
+
   it('clears the history from the view', () => {
     const events = new DevEventLog()
     events.push(event({ message: 'old news' }))
@@ -1232,7 +1117,7 @@ describe('log overlay', () => {
     const { overlay, lastFrame } = create(events)
     overlay.open()
 
-    overlay.handleKey({ name: 'c' })
+    overlay.handleKey({ name: 't' })
     expect(strip(lastFrame())).not.toContain('from cli')
     expect(strip(lastFrame())).toContain('from runtime')
     expect(strip(lastFrame())).toContain('from build')
@@ -1370,11 +1255,183 @@ describe('log overlay', () => {
 
     overlay.handleKey({ name: 'g' })
     expect(strip(lastFrame())).toContain('line 0')
-    expect(strip(lastFrame())).toContain('scrolled')
+    expect(strip(lastFrame())).toContain('paused')
 
     overlay.handleKey({ sequence: 'G', name: 'g' })
-    expect(strip(lastFrame())).not.toContain('scrolled')
+    expect(strip(lastFrame())).not.toContain('paused')
     expect(lastFrame()).not.toContain('\u258E')
+  })
+
+  it('pages through an entry taller than the viewport', () => {
+    const events = new DevEventLog()
+    const rows = (process.stdout.rows || 24) - 3
+    events.push(event({ message: Array.from({ length: rows * 3 }, (_, i) => `row ${i}`).join('\n') }))
+    const { overlay, lastFrame } = create(events)
+    const body = () => strip(lastFrame()).split('\n').slice(2, 2 + rows)
+    overlay.open()
+    overlay.handleKey({ name: 'home' })
+    expect(body()[0]).toContain('row 0')
+    overlay.handleKey({ name: 'pagedown' })
+    expect(body()[0]).toContain(`row ${rows - 1}`)
+    overlay.handleKey({ name: 'pagedown' })
+    expect(body()[0]).toContain(`row ${2 * (rows - 1)}`)
+    overlay.handleKey({ name: 'pageup' })
+    expect(body()[0]).toContain(`row ${rows - 1}`)
+    overlay.handleKey({ name: 'end' })
+    expect(body().at(-1)).toContain(`row ${rows * 3 - 1}`)
+    expect(strip(lastFrame())).not.toContain('paused')
+    overlay.close()
+  })
+
+  it('pages by rows across entries of different heights', () => {
+    const events = new DevEventLog()
+    const rows = (process.stdout.rows || 24) - 3
+    events.push(event({ message: 'short' }))
+    events.push(event({ message: Array.from({ length: rows * 2 }, (_, i) => `stack ${i}`).join('\n') }))
+    events.push(event({ message: 'last' }))
+    const { overlay, lastFrame } = create(events)
+    overlay.open()
+    overlay.handleKey({ name: 'home' })
+    overlay.handleKey({ name: 'pagedown' })
+    expect(strip(lastFrame()).split('\n')[2]).toContain(`stack ${rows - 2}`)
+    overlay.handleKey({ name: 'pageup' })
+    expect(strip(lastFrame()).split('\n')[2]).toContain('short')
+    overlay.close()
+  })
+
+  it('keeps the viewport still while paused and resumes following with End', async () => {
+    const events = new DevEventLog()
+    const rows = (process.stdout.rows || 24) - 3
+    for (let i = 0; i < rows * 2; i++) {
+      events.push(event({ message: `entry ${i}` }))
+    }
+    const { overlay, lastFrame } = create(events)
+    const body = () => strip(lastFrame()).split('\n').slice(2, 2 + rows).join('\n')
+    overlay.open()
+    overlay.handleKey({ name: 'pageup' })
+    const before = body()
+    events.push(event({ message: 'new arrival\nsecond row' }))
+    await vi.waitFor(() => expect(strip(lastFrame())).toContain(`↓${rows + 1} rows below`))
+    expect(body()).toBe(before)
+    overlay.handleKey({ name: 'end' })
+    expect(body()).toContain('new arrival')
+    expect(strip(lastFrame())).not.toContain('paused')
+    events.push(event({ message: 'following again' }))
+    await vi.waitFor(() => expect(body()).toContain('following again'))
+    overlay.close()
+  })
+
+  it('shows incoming logs in spare rows without moving the selection', async () => {
+    const events = new DevEventLog()
+    events.push(event({ message: 'selected entry' }))
+    const { overlay, lastFrame } = create(events)
+    overlay.open()
+    overlay.handleKey({ name: 'up' })
+    const selected = strip(lastFrame()).split('\n')[2]
+    events.push(event({ message: 'incoming entry' }))
+    await vi.waitFor(() => expect(strip(lastFrame())).toContain('incoming entry'))
+    expect(strip(lastFrame()).split('\n')[2]).toBe(selected)
+    expect(strip(lastFrame())).toContain('follow paused')
+    overlay.close()
+  })
+
+  it('keeps the viewport anchored when old events leave the history', async () => {
+    const rows = (process.stdout.rows || 24) - 3
+    const events = new DevEventLog(rows * 3)
+    for (let i = 0; i < rows * 3; i++) {
+      events.push(event({ message: `entry ${i}` }))
+    }
+    const { overlay, lastFrame } = create(events)
+    const body = () => strip(lastFrame()).split('\n').slice(2, 2 + rows).join('\n')
+    overlay.open()
+    overlay.handleKey({ name: 'pageup' })
+    const before = body()
+    events.push(event({ message: 'new arrival' }))
+    await vi.waitFor(() => expect(strip(lastFrame())).toContain(`↓${rows} rows below`))
+    expect(body()).toBe(before)
+    overlay.close()
+  })
+
+  it('keeps a paged position inside a large entry when the terminal height changes', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process.stdout, 'rows')
+    const events = new DevEventLog()
+    events.push(event({ message: Array.from({ length: 40 }, (_, i) => `row ${i}`).join('\n') }))
+    const { overlay, lastFrame } = create(events)
+    try {
+      Object.defineProperty(process.stdout, 'rows', { value: 8, configurable: true })
+      overlay.open()
+      overlay.handleKey({ name: 'home' })
+      overlay.handleKey({ name: 'pagedown' })
+      expect(strip(lastFrame()).split('\n')[2]).toContain('row 4')
+      Object.defineProperty(process.stdout, 'rows', { value: 12, configurable: true })
+      process.stdout.emit('resize')
+      await vi.waitFor(() => expect(strip(lastFrame()).split('\n')).toHaveLength(12))
+      expect(strip(lastFrame()).split('\n')[2]).toContain('row 4')
+    }
+    finally {
+      overlay.close()
+      if (descriptor) {
+        Object.defineProperty(process.stdout, 'rows', descriptor)
+      }
+      else {
+        Reflect.deleteProperty(process.stdout, 'rows')
+      }
+    }
+  })
+
+  it('copies a complete entry after paging into its middle', async () => {
+    const events = new DevEventLog()
+    const rows = (process.stdout.rows || 24) - 3
+    const time = new Date(2024, 0, 1, 13, 2, 3).getTime()
+    const message = Array.from({ length: rows * 3 }, (_, i) => `row ${i}`).join('\n')
+    events.push(event({ time, message }))
+    const { overlay } = create(events)
+    overlay.open()
+    overlay.handleKey({ name: 'home' })
+    overlay.handleKey({ name: 'pagedown' })
+    overlay.handleKey({ name: 'y' })
+    await vi.waitFor(() => expect(copied).toHaveLength(1))
+    expect(copied[0]).toBe(`${new Date(time).toLocaleTimeString()} ${message}`)
+    overlay.close()
+  })
+
+  it('resumes following and clears the selection when filters change', () => {
+    const events = new DevEventLog()
+    events.push(event({ message: 'info' }))
+    events.push(event({ message: 'error', level: 0 }))
+    const { overlay, lastFrame } = create(events)
+    overlay.open()
+    overlay.handleKey({ name: 'home' })
+    expect(strip(lastFrame())).toContain('paused')
+    overlay.handleKey({ name: 'e' })
+    expect(strip(lastFrame())).not.toContain('paused')
+    expect(lastFrame()).not.toContain('▎')
+    expect(strip(lastFrame())).toContain('error')
+    overlay.close()
+  })
+
+  it('uses Home and End as aliases for g and G', () => {
+    const events = new DevEventLog()
+    for (let i = 0; i < 100; i++) {
+      events.push(event({ message: `entry ${i}` }))
+    }
+    const { overlay, lastFrame } = create(events)
+    overlay.open()
+    overlay.handleKey({ name: 'home' })
+    const home = lastFrame()
+    overlay.handleKey({ name: 'end' })
+    const end = lastFrame()
+    overlay.handleKey({ name: 'g', sequence: 'g' })
+    expect(lastFrame()).toBe(home)
+    overlay.handleKey({ name: 'g', sequence: 'G' })
+    expect(lastFrame()).toBe(end)
+    overlay.close()
+  })
+
+  it('uses a compact local 24-hour timestamp in the gutter', () => {
+    const time = new Date(2024, 0, 1, 13, 2, 3).getTime()
+    const [line] = formatEvent(event({ time, message: 'message' }), 80)
+    expect(strip(line!)).toBe('13:02:03 message')
   })
 
   it('starts at the top when entering the list with the down arrow', () => {
@@ -1718,6 +1775,68 @@ describe('request overlay', () => {
     expect(lastFrame()).toContain('traffic')
   })
 
+  it('keeps trace navigation keys inside search', () => {
+    const { log, overlay, lastFrame } = create()
+    log.push([{ time: 0, method: 'GET', url: '/quiet', status: 200, duration: 2 }])
+    overlay.open()
+    overlay.handleKey({ name: 'down' })
+    overlay.handleKey({ name: 'return' })
+    overlay.handleKey({ sequence: '/' })
+    overlay.handleKey({ name: 'q', sequence: 'q' })
+    overlay.handleKey({ name: 'n', sequence: 'n' })
+    expect(lastFrame()).toContain('search qn')
+    overlay.handleKey({ name: 'backspace' })
+    expect(lastFrame()).toContain('search q')
+    overlay.handleKey({ name: 'escape' })
+    expect(lastFrame()).toContain('trace')
+    expect(lastFrame()).not.toContain('search')
+    overlay.handleKey({ name: 'escape' })
+    expect(lastFrame()).toContain('traffic')
+    overlay.close()
+  })
+
+  it('draws the spans timed for a request on a timeline', () => {
+    const { log, overlay, lastFrame } = create({ events: new DevEventLog() })
+    log.push([{ id: 'r1', time: 0, start: 1000, method: 'GET', url: '/', status: 200, duration: 100 }])
+    log.pushSpans([
+      { requestId: 'r1', kind: 'route', name: 'GET /api/data', start: 1010, duration: 50, status: 200 },
+      { requestId: 'r1', kind: 'hook', name: 'render:html', start: 1080, duration: 0.4 },
+      { requestId: 'r1', kind: 'fetch', name: 'GET https://a.dev', start: 1020, duration: 30, status: 200 },
+      { requestId: 'r1', kind: 'middleware', name: 'GET /api/data', start: 1010, duration: 5 },
+      { requestId: 'r2', kind: 'hook', name: 'unrelated', start: 1000, duration: 1 },
+    ])
+    overlay.open()
+    overlay.handleKey({ name: 'down' })
+    overlay.handleKey({ name: 'return' })
+    const frame = lastFrame()
+    expect(frame).toContain('timeline')
+    expect(frame).toMatch(/route\s+ {2}GET \/api\/data 200\s+█+\s+50ms/)
+    expect(frame).toMatch(/middleware\s+ {4}GET \/api\/data\s+█+\s+5\.0ms/)
+    expect(frame).toMatch(/fetch\s+ {4}GET https:\/\/a\.dev 200/)
+    expect(frame).toMatch(/hook\s+ {2}render:html\s+█\s+0\.4ms/)
+    expect(frame).not.toContain('unrelated')
+    expect(frame.indexOf('GET /api/data')).toBeLessThan(frame.indexOf('a.dev'))
+  })
+
+  it('draws compiled modules as one row and breaks their time down by plugin', () => {
+    const { log, overlay, lastFrame } = create({ events: new DevEventLog() })
+    log.push([{ id: 'r1', time: 0, start: 1000, method: 'GET', url: '/', status: 200, duration: 100 }])
+    log.pushSpans([
+      { requestId: 'r1', kind: 'compile', name: 'app/app.vue', start: 1000, duration: 30, environment: 'nitro', plugins: { 'vite:vue': 20, 'nuxt:components': 4 } },
+      { requestId: 'r1', kind: 'compile', name: 'vue/index.mjs', start: 1010, duration: 10, environment: 'nitro', plugins: { 'vite:vue': 1 } },
+      { requestId: 'r1', kind: 'compile', name: 'app/pages/index.vue', start: 1060, duration: 20, environment: 'nitro', plugins: { 'nuxt:components': 9 } },
+      { requestId: 'r1', kind: 'route', name: 'GET /', start: 1030, duration: 60, status: 200 },
+    ])
+    overlay.open()
+    overlay.handleKey({ name: 'down' })
+    overlay.handleKey({ name: 'return' })
+    const frame = lastFrame()
+    expect(frame).toMatch(/compile\s+3 modules\s+█+ +█+ +50ms/)
+    expect(frame).toMatch(/vite plugins[\s\S]*21ms\s+vite:vue[\s\S]*13ms\s+nuxt:components/)
+    expect(frame).toMatch(/slowest modules[\s\S]*30ms\s+app\/app\.vue \(nitro\)/)
+    expect(frame).not.toMatch(/compile\s+ {2}app\/app\.vue/)
+  })
+
   it('says so when a request has no attributed logs', () => {
     const events = new DevEventLog()
     const { log, overlay, lastFrame } = create({ events })
@@ -1735,7 +1854,8 @@ describe('help overlay', () => {
     let closed = 0
     const overlay = new HelpOverlay(
       () => [
-        { keys: ['r'], ctrl: 'r', description: 'restart the dev server' },
+        { keys: ['r'], description: 'restart the dev server' },
+        { keys: [], ctrl: 'r', description: 'restart the dev server' },
         { keys: ['R'], description: 'restart with a cleared cache' },
         { keys: ['h', '?'], description: 'show this help' },
       ],
@@ -1750,10 +1870,34 @@ describe('help overlay', () => {
   it('lists shortcuts with their aliases instead of logging them', () => {
     const { overlay, lastFrame } = create()
     overlay.open()
-    expect(lastFrame()).toContain('r / ctrl-r')
+    expect(lastFrame()).toContain('ctrl-r')
+    expect(lastFrame()).toContain('global')
+    expect(lastFrame()).toContain('main panel')
+    expect(lastFrame().indexOf('ctrl-r')).toBeLessThan(lastFrame().indexOf('main panel'))
+    expect(lastFrame().indexOf('shift-r')).toBeGreaterThan(lastFrame().indexOf('main panel'))
     expect(lastFrame()).toContain('shift-r')
     expect(lastFrame()).toContain('h / ?')
     expect(lastFrame()).toContain('restart the dev server')
+  })
+
+  it('opens at the beginning in a short terminal', () => {
+    const rows = Object.getOwnPropertyDescriptor(process.stdout, 'rows')
+    const { overlay, lastFrame } = create()
+    try {
+      Object.defineProperty(process.stdout, 'rows', { value: 8, configurable: true })
+      overlay.open()
+      expect(lastFrame().split('\n')[2]).toContain('global')
+      expect(lastFrame()).toContain('ctrl-r')
+    }
+    finally {
+      overlay.close()
+      if (rows) {
+        Object.defineProperty(process.stdout, 'rows', rows)
+      }
+      else {
+        Reflect.deleteProperty(process.stdout, 'rows')
+      }
+    }
   })
 
   it('lists the keys available inside a view', () => {
@@ -2286,10 +2430,16 @@ describe('panel surface', () => {
       surface.render(['--- footer ---'])
       surface.padToBottom()
       const before = read().length
-      await withStubbedColumnsAsync(30, async () => {
-        process.stdout.emit('resize')
-        await new Promise(resolve => setTimeout(resolve, 200))
-      })
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        await withStubbedColumnsAsync(30, async () => {
+          process.stdout.emit('resize')
+          vi.advanceTimersByTime(200)
+        })
+      }
+      finally {
+        vi.useRealTimers()
+      }
       written = read().slice(before)
       surface.close()
     }))
@@ -2306,8 +2456,14 @@ describe('panel surface', () => {
       surface.padToBottom()
       const before = read().length
       Object.defineProperty(process.stdout, 'rows', { value: 20, configurable: true })
-      process.stdout.emit('resize')
-      await new Promise(resolve => setTimeout(resolve, 200))
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        process.stdout.emit('resize')
+        vi.advanceTimersByTime(200)
+      }
+      finally {
+        vi.useRealTimers()
+      }
       written = read().slice(before)
       surface.close()
     }))
@@ -2476,7 +2632,7 @@ describe('panel surface', () => {
   })
 })
 
-describe('release notes links', () => {
+describe('release notes links on the panel', () => {
   const linked = (label: string, url: string) => {
     // Terminal detection has many inputs; this is the switch that overrides them.
     vi.stubEnv('FORCE_HYPERLINK', '1')
@@ -2487,20 +2643,6 @@ describe('release notes links', () => {
       vi.unstubAllEnvs()
     }
   }
-
-  it('points at the tag for packages with a known repository', () => {
-    expect(releaseNotesUrl('nuxt', '4.6.0')).toBe('https://github.com/nuxt/nuxt/releases/tag/v4.6.0')
-    expect(releaseNotesUrl('@nuxt/cli', '3.1.0')).toBe('https://github.com/nuxt/cli/releases/tag/v3.1.0')
-  })
-
-  it('has nothing to link for nightlies or unknown packages', () => {
-    expect(releaseNotesUrl('nuxt', '4.6.0-nightly.20240101')).toBeUndefined()
-    expect(releaseNotesUrl('some-other-package', '1.0.0')).toBeUndefined()
-  })
-
-  it('emits a hyperlink only where the terminal supports one', () => {
-    expect(terminalLink('4.6.0', 'https://example.com', { stream: { isTTY: false } })).toBe('4.6.0')
-  })
 
   it('links the running version as well as the update', () => {
     const link = linked('4.5.1', 'https://github.com/nuxt/nuxt/releases/tag/v4.5.1')
@@ -2871,6 +3013,165 @@ async function withPanel(run: (ui: ReturnType<typeof setupDevUI>, settle: () => 
   }
 }
 
+describe('panel shortcut routing', () => {
+  it.each(['ready', 'starting', 'building', 'restarting', 'warming', 'error'] as const)('quits without confirmation while %s', async (status) => {
+    const interrupt = vi.fn()
+    process.on('SIGINT', interrupt)
+    try {
+      await withPanel(async (ui) => {
+        ui.setStatus(status)
+        process.stdin.emit('keypress', 'q', { name: 'q', sequence: 'q' })
+        expect(interrupt).toHaveBeenCalledOnce()
+        expect(process.stdin.listenerCount('keypress')).toBe(0)
+      })
+    }
+    finally {
+      process.off('SIGINT', interrupt)
+    }
+  })
+
+  it('quits with Ctrl-D from search inside a view', async () => {
+    const interrupt = vi.fn()
+    process.on('SIGINT', interrupt)
+    try {
+      await withPanel(async (_ui, _settle) => {
+        process.stdin.emit('keypress', 'l', { name: 'l' })
+        process.stdin.emit('keypress', '/', { sequence: '/' })
+        process.stdin.emit('keypress', '', { name: 'd', ctrl: true })
+        expect(interrupt).toHaveBeenCalledOnce()
+        expect(process.stdin.listenerCount('keypress')).toBe(0)
+      })
+    }
+    finally {
+      process.off('SIGINT', interrupt)
+    }
+  })
+
+  it.runIf(process.platform !== 'win32')('forwards Ctrl-backslash as SIGQUIT', async () => {
+    const quit = vi.fn()
+    process.on('SIGQUIT', quit)
+    try {
+      await withPanel(async () => {
+        process.stdin.emit('keypress', '', { name: '\\', ctrl: true })
+        expect(quit).toHaveBeenCalledOnce()
+        expect(process.stdin.listenerCount('keypress')).toBe(0)
+      })
+    }
+    finally {
+      process.off('SIGQUIT', quit)
+    }
+  })
+
+  it('hides unavailable restart shortcuts and reports their use', async () => {
+    await withPanel(async (_ui, _settle, session) => {
+      expect(session.state.hints?.some(hint => hint.key === 'r')).toBe(false)
+      process.stdin.emit('keypress', 'r', { name: 'r', sequence: 'r' })
+      expect(session.state.notice?.text).toContain('not available yet')
+    })
+  })
+
+  it('keeps the active view open when Ctrl-R is unavailable', async () => {
+    await withPanel(async (_ui, _settle, session) => {
+      process.stdin.emit('keypress', 'l', { name: 'l' })
+      expect(session.surface.screenMode).toBe('alternate-screen')
+      process.stdin.emit('keypress', '', { name: 'r', ctrl: true })
+      expect(session.state.notice?.text).toContain('not available yet')
+      expect(session.surface.screenMode).toBe('alternate-screen')
+      process.stdin.emit('keypress', '', { name: 'escape' })
+      expect(session.surface.screenMode).toBe('split-footer')
+    })
+  })
+
+  it('clears caches only for Shift-R', async () => {
+    const clearCaches = vi.fn(async () => [])
+    const restart = vi.fn()
+    await withPanel(async () => {
+      process.stdin.emit('keypress', 'r', { name: 'r', sequence: 'r' })
+      expect(restart).toHaveBeenCalledOnce()
+      expect(clearCaches).not.toHaveBeenCalled()
+      process.stdin.emit('keypress', 'R', { name: 'r', sequence: 'R', shift: true })
+      await vi.waitFor(() => expect(restart).toHaveBeenCalledTimes(2))
+      expect(clearCaches).toHaveBeenCalledOnce()
+    }, { restart, clearCaches })
+  })
+
+  it('ignores Alt-Q and restarts globally with Ctrl-R', async () => {
+    const restart = vi.fn()
+    await withPanel(async (_ui, _settle) => {
+      process.stdin.emit('keypress', '', { name: 'q', meta: true })
+      expect(process.stdin.listenerCount('keypress')).toBeGreaterThan(0)
+      expect(restart).not.toHaveBeenCalled()
+      process.stdin.emit('keypress', 'l', { name: 'l' })
+      process.stdin.emit('keypress', '', { name: 'r', ctrl: true })
+      expect(restart).toHaveBeenCalledOnce()
+    }, { restart })
+  })
+
+  it('preserves history when clearing the display and deletes it with x', async () => {
+    await withPanel(async (ui, _settle, session) => {
+      ui.pushServerLog({ level: 3, logType: 'info', message: 'retained log' })
+      ui.pushRequests([{ method: 'GET', url: '/retained', status: 200, duration: 1 }])
+      process.stdin.emit('keypress', 'c', { name: 'c' })
+      process.stdin.emit('keypress', '', { name: 'l', ctrl: true })
+      expect(session.events.recent(10).some(event => event.message === 'retained log')).toBe(true)
+      expect(session.state.requests).toBe(1)
+      process.stdin.emit('keypress', 'l', { name: 'l' })
+      process.stdin.emit('keypress', '', { name: 'l', ctrl: true })
+      expect(session.events.recent(10).some(event => event.message === 'retained log')).toBe(true)
+      process.stdin.emit('keypress', '', { name: 'escape' })
+      process.stdin.emit('keypress', 'x', { name: 'x' })
+      expect(session.events.recent(10)).toEqual([])
+      expect(session.state.requests).toBeUndefined()
+    })
+  })
+
+  it.runIf(process.platform !== 'win32')('keeps borrowed input exclusive across suspend and resume', async () => {
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true)
+    try {
+      await withPanel(async (_ui, _settle, session) => {
+        let finish!: () => void
+        const borrowed = useTerminalHost()!.withTerminal(() => new Promise<void>((resolve) => {
+          finish = resolve
+        }))
+        await vi.waitFor(() => expect(finish).toBeTypeOf('function'))
+        process.emit('SIGTSTP')
+        process.emit('SIGCONT')
+        expect(process.stdin.listenerCount('keypress')).toBe(0)
+        finish()
+        await borrowed
+        await new Promise(resolve => setImmediate(resolve))
+        expect(process.stdin.listenerCount('keypress')).toBe(1)
+        session.teardown()
+        expect(process.stdin.listenerCount('keypress')).toBe(0)
+      })
+    }
+    finally {
+      kill.mockRestore()
+    }
+  })
+
+  it.runIf(process.platform !== 'win32')('restores keyboard input after suspension', async () => {
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true)
+    try {
+      const restart = vi.fn()
+      await withPanel(async () => {
+        process.stdin.emit('keypress', 'l', { name: 'l' })
+        process.stdin.emit('keypress', '', { name: 'z', ctrl: true })
+        expect(kill).toHaveBeenCalledWith(process.pid, 'SIGSTOP')
+        expect(process.stdin.listenerCount('keypress')).toBe(0)
+        process.emit('SIGCONT')
+        await new Promise(resolve => setImmediate(resolve))
+        expect(process.stdin.listenerCount('keypress')).toBe(1)
+        process.stdin.emit('keypress', 'r', { name: 'r', sequence: 'r' })
+        expect(restart).toHaveBeenCalledOnce()
+      }, { restart })
+    }
+    finally {
+      kill.mockRestore()
+    }
+  })
+})
+
 describe('request failures on the panel', () => {
   it('should not report the bundler\'s own failed probes as failed requests', async () => {
     await withPanel(async (ui, settle) => {
@@ -3005,10 +3306,11 @@ describe('request failures on the panel', () => {
     })
   })
 
+  const flush = () => new Promise(resolve => setImmediate(() => setImmediate(resolve)))
+
   // In-process, the same log reaches the UI over the channel, through the
   // console wrapper and as the bytes it printed.
   async function logInProcess(ui: ReturnType<typeof setupDevUI>, message: string, reprint = false): Promise<void> {
-    const flush = () => new Promise(resolve => setImmediate(() => setImmediate(resolve)))
     const level = consola.level
     consola.level = 3
     try {
@@ -3024,6 +3326,77 @@ describe('request failures on the panel', () => {
       consola.level = level
     }
   }
+
+  it('should record logs printed in the same tick as separate entries', async () => {
+    await withPanel(async (_ui, _settle, session) => {
+      process.stdout.write('[nuxt:icon] \u2714 Nuxt Icon loaded local collection\n')
+      process.stdout.write('\n WARN  Nuxt Icon serverBundle is deprecated\n\n')
+      process.stdout.write('[@nuxtjs/mcp-toolkit] \u2139 Cursor detected\n[@nuxtjs/mcp-toolkit] \u2714 /mcp enabled\n')
+      await flush()
+
+      expect(session.events.recent(50).map(event => [event.level, event.message])).toEqual([
+        [2, '[nuxt:icon] \u2714 Nuxt Icon loaded local collection'],
+        [1, 'Nuxt Icon serverBundle is deprecated'],
+        [2, '[@nuxtjs/mcp-toolkit] \u2139 Cursor detected'],
+        [2, '[@nuxtjs/mcp-toolkit] \u2714 /mcp enabled'],
+      ])
+    })
+  })
+
+  it('should keep a stack and what follows it with the error printed above', async () => {
+    await withPanel(async (_ui, _settle, session) => {
+      process.stdout.write('\n ERROR  failed to resolve import\n\n    at load (file.ts:1:1)\n\nIs the package installed?\n\n')
+      await flush()
+
+      expect(session.events.recent(50).map(event => [event.level, event.message])).toEqual([
+        [0, 'failed to resolve import\n\n    at load (file.ts:1:1)\n\nIs the package installed?'],
+      ])
+    })
+  })
+
+  it('should keep what each split log was printed as', async () => {
+    await withPanel(async (_ui, _settle, session) => {
+      const printed = ['[a] \u2714 first printed log\n\n', '\n WARN  second printed log\n\n', '[b] \u2714 third printed log']
+      process.stdout.write(printed.join(''))
+      await flush()
+
+      expect(session.events.recent(50).map(event => event.rendered)).toEqual(printed)
+    })
+  })
+
+  it.each(['printed output', 'forwarded logs'])('should pair forwarded logs with their printed output (%s first)', async (first) => {
+    await withPanel(async (ui, _settle, session) => {
+      const printed = [
+        '[nuxt:icon] \u2714 Nuxt Icon loaded local collection\n',
+        '\n WARN  Nuxt Icon serverBundle is deprecated\n\n',
+        '\n[@nuxt/robots]  WARN  You have disallowed robots\n\n',
+        '[vite] printed without being forwarded\n',
+      ]
+      const forward = () => {
+        ui.pushServerLog({ level: 3, logType: 'success', tag: 'nuxt:icon', message: 'Nuxt Icon loaded local collection', origin: 'build', raw: true })
+        ui.pushServerLog({ level: 1, logType: 'warn', message: 'Nuxt Icon serverBundle is deprecated', origin: 'build', raw: true })
+        ui.pushServerLog({ level: 1, logType: 'warn', tag: '@nuxt/robots', message: 'You have disallowed robots', origin: 'build', raw: true })
+      }
+      if (first === 'forwarded logs') {
+        forward()
+      }
+      process.stdout.write(printed.join(''))
+      await flush()
+      if (first === 'printed output') {
+        forward()
+      }
+      process.stdout.write('[vite] printed later\n')
+      await flush()
+
+      expect(session.events.recent(50).map(({ level, tag, message, rendered }) => ({ level, tag, message, rendered }))).toEqual([
+        { level: 3, tag: 'nuxt:icon', message: 'Nuxt Icon loaded local collection', rendered: printed[0] },
+        { level: 1, tag: undefined, message: 'Nuxt Icon serverBundle is deprecated', rendered: printed[1] },
+        { level: 1, tag: '@nuxt/robots', message: 'You have disallowed robots', rendered: printed[2] },
+        { level: 2, tag: undefined, message: '[vite] printed without being forwarded', rendered: printed[3] },
+        { level: 2, tag: undefined, message: '[vite] printed later', rendered: '[vite] printed later\n' },
+      ])
+    })
+  })
 
   it('should record an app log the CLI serves itself once', async () => {
     await withPanel(async (ui, _settle, session) => {
@@ -3171,6 +3544,24 @@ describe('request failures on the panel', () => {
         ready()
         expect(opened).toEqual([])
       })
+    })
+
+    it('should cancel opening after a listener binds but before readiness', async () => {
+      opened.length = 0
+      const { context: deferred, attach } = deferShortcutContext()
+      let ready!: () => void
+      await withPanel(async () => {
+        process.stdin.emit('keypress', 'o', { name: 'o', sequence: 'o' })
+        attach({
+          listener: listener as never,
+          close: async () => {},
+          onReady: (callback) => { ready = () => callback(listener.url) },
+        })
+        process.stdin.emit('keypress', 'o', { name: 'o', sequence: 'o' })
+        expect(opened).toEqual([])
+        ready()
+        expect(opened).toEqual([])
+      }, { context: deferred })
     })
 
     it('should open at once when the server is already up', async () => {

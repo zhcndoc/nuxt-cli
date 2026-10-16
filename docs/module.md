@@ -14,7 +14,7 @@ Nuxt 提供了一些实用工具，可无缝处理 [Nuxt modules](/modules)。
 
 <!--module-add-cmd-->
 ```bash [Terminal]
-npx nuxt module add <MODULENAME...> [--cwd=<directory>] [--logLevel=<silent|info|verbose>] [--skipInstall] [--skipConfig] [--dev] [--packageManager=<npm|pnpm|yarn|bun|deno|aube|nub>]
+npx nuxt module add <MODULENAME...> [--cwd=<directory>] [--logLevel=<silent|info|verbose>] [--skipInstall] [--skipConfig] [--dev] [--packageManager=<npm|pnpm|yarn|bun|deno|aube|nub|upm>]
 ```
 <!--/module-add-cmd-->
 
@@ -36,7 +36,7 @@ npx nuxt module add <MODULENAME...> [--cwd=<directory>] [--logLevel=<silent|info
 | `--skipInstall`                                            |         | 跳过 npm 安装                            |
 | `--skipConfig`                                             |         | 跳过 nuxt.config.ts 更新                  |
 | `--dev`                                                    |         | 将模块作为开发依赖安装                   |
-| `--packageManager=<npm\|pnpm\|yarn\|bun\|deno\|aube\|nub>` |         | 用于安装的软件包管理器                   |
+| `--packageManager=<npm\|pnpm\|yarn\|bun\|deno\|aube\|nub\|upm>` |         | 用于安装的软件包管理器                   |
 <!--/module-add-opts-->
 
 该命令可让你无需手动操作即可在应用中安装 [Nuxt modules](/modules)。

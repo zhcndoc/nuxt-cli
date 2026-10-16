@@ -13,7 +13,6 @@ import { withStartupClockPaused } from './startup-clock'
 import { isInteractiveSession, trackOutputSpacing } from './stdout'
 import { useTerminalHost } from './terminal-host'
 
-// TODO: Use better API from consola for intercepting logs
 function wrapReporter(reporter: ConsolaReporter) {
   return ({
     log(logObj, ctx) {
@@ -22,8 +21,7 @@ function wrapReporter(reporter: ConsolaReporter) {
       }
       const msg = logObj.args[0]
       if (typeof msg === 'string' && !process.env.DEBUG) {
-        // TODO: resolve upstream in Vite
-        // Hide sourcemap warnings related to node_modules
+        // Vite warns about sourcemaps in third-party packages, which users cannot fix.
         if (msg.startsWith('Sourcemap') && msg.includes('node_modules')) {
           return
         }
@@ -44,6 +42,16 @@ export async function configureProjectConsola(rootDir: string): Promise<void> {
     if (projectConsola) {
       projectConsola.options.formatOptions.date = false
       interceptPrompts(projectConsola)
+      // Logs from a separate instance would otherwise bypass the dev UI's reporters.
+      if (projectConsola !== consola) {
+        projectConsola.setReporters([{
+          log(logObj, ctx) {
+            for (const reporter of consola.options.reporters) {
+              reporter.log(logObj, ctx)
+            }
+          },
+        }])
+      }
     }
   }
   catch (error) {
@@ -146,6 +154,10 @@ export async function withDirectStdout<T>(fn: () => T | Promise<T>): Promise<T> 
   finally {
     consola.wrapStd()
   }
+}
+
+export function printJson(value: unknown): Promise<unknown> {
+  return withDirectStdout(() => process.stdout.write(`${JSON.stringify(value, null, 2)}\n`))
 }
 
 type PromptFn = NonNullable<ConsolaOptions['prompt']>

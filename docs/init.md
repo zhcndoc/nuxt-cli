@@ -10,7 +10,7 @@ links:
 
 <!--init-cmd-->
 ```bash [Terminal]
-npm create nuxt@latest [DIR] -- [--cwd=<directory>] [--logLevel=<silent|info|verbose>] [-t, --template=<template-name>] [-f, --force] [--offline] [--preferOffline] [--install] [--gitInit] [--shell] [--packageManager=<npm|pnpm|yarn|bun|deno|aube|nub>] [-M, --modules=<module-names>] [--nightly=<dist-tag>]
+npm create nuxt@latest [DIR] -- [--cwd=<directory>] [--logLevel=<silent|info|verbose>] [-t, --template=<template-name>] [-f, --force] [--offline] [--preferOffline] [--install] [--gitInit] [--shell] [--packageManager=<npm|pnpm|yarn|bun|deno|aube|nub|upm>] [-M, --modules=<module-names>] [--nightly=<dist-tag>]
 ```
 <!--/init-cmd-->
 
@@ -46,7 +46,7 @@ npm create nuxt@latest [DIR] -- [--cwd=<directory>] [--logLevel=<silent|info|ver
 | `--gitInit`                                                |         | 初始化 git 仓库                                                            |
 | `--no-gitInit`                                             |         | 跳过 git 仓库初始化                                                   |
 | `--shell`                                                  |         | 在项目目录中安装完成后启动 shell                                  |
-| `--packageManager=<npm\|pnpm\|yarn\|bun\|deno\|aube\|nub>` |         | 包管理器选择                                                               |
+| `--packageManager=<npm\|pnpm\|yarn\|bun\|deno\|aube\|nub\|upm>` |         | 包管理器选择                                                               |
 | `-M, --modules=<module-names>`                             |         | 要安装的 Nuxt 模块（以逗号分隔，且不包含空格）                             |
 | `--no-modules`                                             |         | 跳过模块安装提示                                                      |
 | `--nightly=<dist-tag>`                                     |         | 使用 Nuxt nightly 发布渠道（一个 `nuxt-nightly` dist tag，默认为 `latest`） |

@@ -10,7 +10,7 @@ links:
 
 <!--add-cmd-->
 ```bash [Terminal]
-npx nuxt add <MODULENAME...> [--cwd=<directory>] [--logLevel=<silent|info|verbose>] [--skipInstall] [--skipConfig] [--dev] [--packageManager=<npm|pnpm|yarn|bun|deno|aube|nub>]
+npx nuxt add <MODULENAME...> [--cwd=<directory>] [--logLevel=<silent|info|verbose>] [--skipInstall] [--skipConfig] [--dev] [--packageManager=<npm|pnpm|yarn|bun|deno|aube|nub|upm>]
 ```
 <!--/add-cmd-->
 
@@ -34,7 +34,7 @@ npx nuxt add <MODULENAME...> [--cwd=<directory>] [--logLevel=<silent|info|verbos
 | `--skipInstall`                                            |         | 跳过 npm install                      |
 | `--skipConfig`                                             |         | 跳过 nuxt.config.ts 更新               |
 | `--dev`                                                    |         | 将模块安装为开发依赖                   |
-| `--packageManager=<npm\|pnpm\|yarn\|bun\|deno\|aube\|nub>` |         | 用于安装的软件包管理器                 |
+| `--packageManager=<npm\|pnpm\|yarn\|bun\|deno\|aube\|nub\|upm>` |         | 用于安装的软件包管理器                 |
 <!--/add-opts-->
 
 运行命令时，它将：

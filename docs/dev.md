@@ -90,7 +90,15 @@ npx nuxt dev [ROOTDIR] [--cwd=<directory>] [--logLevel=<silent|info|verbose>] [-
 
 在视图中，`y` 会复制选中的行，`shift-y` 会复制筛选条件和搜索结果留下的所有行；如果内容过多而无法粘贴，则保留最新的行。在信息视图中，`shift-y` 会改为复制 [`nuxt info`](/docs/api/commands/info) 表格。
 
-传入 `--no-tui` 可直接输出日志；设置 `NUXT_TUI=plain` 也会永久采用此模式。`NUXT_TUI=1` 会在环境检查原本会关闭 UI 的情况下强制启用 UI，但如果输出通过管道传输或重定向，则不会启用。
+### 追踪请求
+
+在网络视图（`n`）中选中一个请求并按 `enter`，即可查看它的耗时分布。追踪会在同一条时间线上绘制服务器为该请求执行的所有操作：路由中间件、服务器路由处理程序、Nuxt 插件、钩子、数据获取、渲染，以及应用向其他服务器发出的请求。时间线下方会列出 Vite 为该请求编译模块所花的时间，并按 Vite 插件和最慢模块细分，随后显示该请求产生的日志。
+
+追踪基于 Nuxt 和 Nitro 发布的 [tracing channels](https://nodejs.org/api/diagnostics_channel.html#class-tracingchannel)，因此展示内容取决于所用版本。`nuxt dev` 会为你启用 `tracingChannel` 选项；如要退出，请在 `nuxt.config` 中设置 `tracingChannel: false`。
+
+### 禁用 UI
+
+传入 `--no-tui` 或设置 `NUXT_TUI=plain`，即可改为流式输出日志。也可以传入 `NUXT_TUI=1` 强制启用 UI（如果输出通过管道传输或重定向，该设置不起作用）。
 
 ![带有普通输出的 nuxt dev](/capture/output/nuxt-dev-plain-static.svg)
 
