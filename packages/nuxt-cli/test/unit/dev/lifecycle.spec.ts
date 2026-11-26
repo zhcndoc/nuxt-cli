@@ -2,13 +2,17 @@ import type { AddressInfo, Socket } from 'node:net'
 
 import { EventEmitter } from 'node:events'
 import { existsSync, readFileSync } from 'node:fs'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { request } from 'node:http'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import process from 'node:process'
+import { BroadcastChannel } from 'node:worker_threads'
 
 import { join } from 'pathe'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { logger } from '../../../src/utils/logger'
 
 const { buildNuxt, diffNuxtConfig, loadNuxt, loadNuxtConfig, writeTypes } = vi.hoisted(() => ({
   buildNuxt: vi.fn(),
@@ -19,11 +23,19 @@ const { buildNuxt, diffNuxtConfig, loadNuxt, loadNuxtConfig, writeTypes } = vi.h
 }))
 
 vi.mock('../../../src/utils/kit', () => ({
-  loadKit: () => Promise.resolve({ buildNuxt, diffNuxtConfig, loadNuxt, loadNuxtConfig, writeTypes }),
+  loadKit: () => Promise.resolve({
+    buildNuxt,
+    diffNuxtConfig,
+    loadNuxt,
+    loadNuxtConfig,
+    writeTypes,
+  }),
   tryResolveNuxt: () => undefined,
 }))
 
 const { NuxtDevServer } = await import('../../../src/dev/utils')
+const { closeErrorChannel, createCliReport, ERROR_BROADCAST_CHANNEL, useErrorChannel } = await import('../../../src/dev/error-channel')
+const { loadDevServerHint, saveDevServerHint } = await import('../../../src/utils/dev-hint')
 
 type Hook = (...args: any[]) => unknown
 
@@ -63,10 +75,19 @@ function createNuxt(overrides: Record<string, any> = {}): FakeNuxt {
       _layers: [],
       ...overrides,
     },
-    hook: (name, fn) => void hooks.set(name, [...hooks.get(name) || [], fn]),
+    hook: (name, fn) => void hooks.set(name, [
+      ...hooks.get(name) || [],
+      fn,
+    ]),
     hooks: {
-      hook: (name, fn) => void hooks.set(name, [...hooks.get(name) || [], fn]),
-      hookOnce: (name, fn) => void hooks.set(name, [...hooks.get(name) || [], fn]),
+      hook: (name, fn) => void hooks.set(name, [
+        ...hooks.get(name) || [],
+        fn,
+      ]),
+      hookOnce: (name, fn) => void hooks.set(name, [
+        ...hooks.get(name) || [],
+        fn,
+      ]),
       callHook,
     },
     ready: () => Promise.resolve(),
@@ -85,7 +106,12 @@ function createServer(options: Record<string, any> = {}) {
     cwd,
     dotenv: {},
     overrides: {},
-    listenOverrides: { hostname: '127.0.0.1', port: 0, showURL: false, qr: false },
+    listenOverrides: {
+      hostname: '127.0.0.1',
+      port: 0,
+      showURL: false,
+      qr: false,
+    },
     ...options,
   })
   servers.push(server)
@@ -96,6 +122,25 @@ async function get(server: InstanceType<typeof NuxtDevServer>, path = '/'): Prom
   const { port } = server.listener.address as AddressInfo
   const response = await fetch(`http://127.0.0.1:${port}${path}`)
   return { status: response.status, body: await response.text() }
+}
+
+/** Status of `path` for a `Host` header, which `fetch` does not let a caller set. */
+function statusForHost(server: InstanceType<typeof NuxtDevServer>, host: string, path = '/__nuxt_dev__/progress'): Promise<number | undefined> {
+  const { port } = server.listener.address as AddressInfo
+  return new Promise((resolve, reject) => {
+    const req = request({
+      host: '127.0.0.1',
+      port,
+      path,
+      headers: { host },
+    }, (res) => {
+      // The progress endpoint is a stream that does not end.
+      res.destroy()
+      resolve(res.statusCode)
+    })
+    req.once('error', reject)
+    req.end()
+  })
 }
 
 /** Drive `handler` without a socket, for a server that has not listened yet. */
@@ -111,7 +156,12 @@ async function serveLocally(server: InstanceType<typeof NuxtDevServer>, path: st
     res.emit('close')
   }
   const closed = new Promise<void>(resolve => res.once('close', resolve))
-  const req = { url: path, method: 'GET', headers: { accept: 'text/html', host: '127.0.0.1' }, rawHeaders: [] } as any
+  const req = {
+    url: path,
+    method: 'GET',
+    headers: { accept: 'text/html', host: '127.0.0.1' },
+    rawHeaders: [],
+  } as any
   await server.handler(req, res)
   await closed
   return { status: res.statusCode }
@@ -134,7 +184,13 @@ async function serveAsPeer(server: InstanceType<typeof NuxtDevServer>, remoteAdd
     res.emit('close')
   }
   const closed = new Promise<void>(resolve => res.once('close', resolve))
-  const req = { url: path, method: 'GET', headers: { accept: 'text/html', host: '127.0.0.1' }, rawHeaders: [], socket: { remoteAddress } } as any
+  const req = {
+    url: path,
+    method: 'GET',
+    headers: { accept: 'text/html', host: '127.0.0.1' },
+    rawHeaders: [],
+    socket: { remoteAddress },
+  } as any
   await server.handler(req, res)
   await closed
   return { status: res.statusCode, body: res.body }
@@ -233,7 +289,10 @@ describe('dev server startup', () => {
 
 describe('dev server request feed', () => {
   it('should keep its own loading responses out of the feed', async () => {
-    const server = createServer({ captureUIEvents: true, loadingTemplate: () => 'loading' })
+    const server = createServer({
+      captureUIEvents: true,
+      loadingTemplate: () => 'loading',
+    })
     const seen: Array<{ url: string, status: number }> = []
     server.on('request', event => seen.push({ url: event.url, status: event.status }))
 
@@ -249,10 +308,146 @@ describe('dev server request feed', () => {
     server.on('request', event => seen.push({ url: event.url, status: event.status }))
 
     loadNuxt.mockImplementation(() => Promise.reject(new Error('config exploded')))
-    await server.load(true, { type: 'config', files: [join(cwd, 'nuxt.config.ts')] })
+    await server.load(true, {
+      type: 'config',
+      files: [
+        join(cwd, 'nuxt.config.ts'),
+      ],
+    })
     await expect(get(server, '/broken')).resolves.toMatchObject({ status: 500 })
 
     await vi.waitFor(() => expect(seen).toContainEqual({ url: '/broken', status: 500 }))
+  })
+})
+
+describe('dev server response listeners', () => {
+  it.each([true, false])('should hand the app a response with one `close` listener (captureUIEvents: %s)', async (captureUIEvents) => {
+    const counts: number[] = []
+    const nuxt = createNuxt()
+    nuxt.server.handler = (_req, res) => {
+      counts.push(res.listenerCount('close'))
+      res.end('app')
+    }
+    loadNuxt.mockImplementation(() => Promise.resolve(nuxt))
+    const server = createServer({ captureUIEvents })
+    await server.init()
+    const { port } = server.listener.address as AddressInfo
+
+    for (const accept of ['text/html', 'text/html', '*/*']) {
+      await fetch(`http://127.0.0.1:${port}/`, {
+        headers: { accept },
+      }).then(response => response.text())
+    }
+
+    expect(counts).toEqual([1, 1, 1])
+  })
+})
+
+describe('dev server stack', () => {
+  it('should report the server builder on load and again once it has built', async () => {
+    const nuxt = createNuxt({
+      builder: 'vite',
+      server: {
+        builder: {
+          bundle: () => {},
+        },
+      },
+    }) as FakeNuxt & { serverBuild?: unknown }
+    loadNuxt.mockImplementation(() => Promise.resolve(nuxt))
+    buildNuxt.mockImplementation(async () => {
+      nuxt.serverBuild = {
+        name: 'nitro',
+        label: 'Nitro',
+        capabilities: { server: true, dev: true },
+      }
+    })
+    const server = createServer({ captureUIEvents: true })
+    const seen: unknown[] = []
+    server.on('stack', stack => seen.push(stack))
+
+    await server.init()
+
+    expect(seen).toEqual([
+      { builder: 'vite', server: 'custom' },
+      { builder: 'vite', server: 'nitro' },
+    ])
+  })
+
+  it('should report the nitro major Nuxt resolved', async () => {
+    const nuxt = createNuxt({
+      builder: 'vite',
+      _nitroMajor: 3,
+      server: {
+        builder: {
+          bundle: () => {},
+        },
+      },
+    }) as FakeNuxt & { serverBuild?: unknown }
+    loadNuxt.mockImplementation(() => Promise.resolve(nuxt))
+    buildNuxt.mockImplementation(async () => {
+      nuxt.serverBuild = {
+        name: 'nitro',
+        label: 'Nitro',
+        capabilities: { server: true, dev: true },
+      }
+    })
+    const server = createServer({ captureUIEvents: true })
+    const seen: unknown[] = []
+    server.on('stack', stack => seen.push(stack))
+
+    await server.init()
+
+    expect(seen).toEqual([
+      { builder: 'vite', server: 'custom', nitroMajor: 3 },
+      { builder: 'vite', server: 'nitro', nitroMajor: 3 },
+    ])
+  })
+})
+
+describe('dev server nitro build hooks', () => {
+  async function registeredNitroHooks(nuxt: FakeNuxt): Promise<Array<{ name: string, building: boolean }>> {
+    loadNuxt.mockImplementation(() => Promise.resolve(nuxt))
+    const server = createServer({ captureUIEvents: true })
+    await server.init()
+    const registered: Array<{ name: string, building: boolean }> = []
+    await nuxt.callHook('nitro:init', {
+      hooks: {
+        hook: (name: string, fn: () => void) => {
+          const building: boolean[] = []
+          const listener = (value: boolean) => building.push(value)
+          server.on('building', listener)
+          fn()
+          server.off('building', listener)
+          registered.push({ name, building: building[0]! })
+          return () => {}
+        },
+      },
+    })
+    return registered
+  }
+
+  it('should watch `rollup:before` on Nitro v2', async () => {
+    const registered = await registeredNitroHooks(createNuxt())
+
+    expect(registered).toEqual([
+      { name: 'dev:start', building: true },
+      { name: 'rollup:before', building: true },
+      { name: 'compiled', building: false },
+      { name: 'dev:reload', building: false },
+      { name: 'dev:error', building: false },
+    ])
+  })
+
+  it('should watch `build:config` on Nitro v3', async () => {
+    const registered = await registeredNitroHooks(createNuxt({ _nitroMajor: 3 }))
+
+    expect(registered).toEqual([
+      { name: 'dev:start', building: true },
+      { name: 'build:config', building: true },
+      { name: 'compiled', building: false },
+      { name: 'dev:reload', building: false },
+      { name: 'dev:error', building: false },
+    ])
   })
 })
 
@@ -270,7 +465,12 @@ describe('dev server failures', () => {
     const failure = new Promise<Error>(resolve => server.once('loading:error', resolve))
 
     loadNuxt.mockImplementation(() => Promise.reject(new Error('config exploded')))
-    await server.load(true, { type: 'config', files: [join(cwd, 'nuxt.config.ts')] })
+    await server.load(true, {
+      type: 'config',
+      files: [
+        join(cwd, 'nuxt.config.ts'),
+      ],
+    })
 
     await expect(failure).resolves.toMatchObject({ message: 'config exploded' })
     await expect(get(server)).resolves.toMatchObject({ status: 500 })
@@ -281,7 +481,12 @@ describe('dev server failures', () => {
     await server.init()
 
     loadNuxt.mockImplementation(() => Promise.reject(new Error('broken on reload')))
-    await server.load(true, { type: 'config', files: [join(cwd, 'nuxt.config.ts')] })
+    await server.load(true, {
+      type: 'config',
+      files: [
+        join(cwd, 'nuxt.config.ts'),
+      ],
+    })
 
     const { status, body } = await get(server)
     expect(status).toBe(500)
@@ -293,7 +498,12 @@ describe('dev server failures', () => {
     await server.init()
 
     loadNuxt.mockImplementation(() => Promise.reject(new Error('broken on reload')))
-    await server.load(true, { type: 'config', files: [join(cwd, 'nuxt.config.ts')] })
+    await server.load(true, {
+      type: 'config',
+      files: [
+        join(cwd, 'nuxt.config.ts'),
+      ],
+    })
 
     const local = await serveAsPeer(server, '127.0.0.1')
     const remote = await serveAsPeer(server, '192.168.0.31')
@@ -310,8 +520,18 @@ describe('dev server failures', () => {
     await server.init()
 
     loadNuxt.mockImplementationOnce(() => Promise.reject(new Error('broken on reload')))
-    await server.load(true, { type: 'config', files: [join(cwd, 'nuxt.config.ts')] })
-    await server.load(true, { type: 'config', files: [join(cwd, 'nuxt.config.ts')] })
+    await server.load(true, {
+      type: 'config',
+      files: [
+        join(cwd, 'nuxt.config.ts'),
+      ],
+    })
+    await server.load(true, {
+      type: 'config',
+      files: [
+        join(cwd, 'nuxt.config.ts'),
+      ],
+    })
 
     await expect(get(server)).resolves.toMatchObject({ status: 200, body: 'app' })
   })
@@ -338,15 +558,114 @@ describe('dev server reload', () => {
     expect(loadNuxt).toHaveBeenCalledTimes(2)
   })
 
+  it('should finish a reload when a `close` hook never settles', async () => {
+    const nuxt = createNuxt()
+    nuxt.close = () => new Promise<void>(() => {})
+    loadNuxt.mockImplementationOnce(() => Promise.resolve(nuxt))
+    const server = createServer()
+    await server.init()
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout'],
+    })
+    try {
+      const reload = server.load(true, { type: 'shortcut' })
+      await vi.advanceTimersByTimeAsync(10_000)
+      await reload
+    }
+    finally {
+      vi.useRealTimers()
+    }
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('`close` hooks did not finish within 10s'))
+    expect(loadNuxt).toHaveBeenCalledTimes(2)
+    await expect(get(server)).resolves.toMatchObject({ status: 200, body: 'app' })
+    warn.mockRestore()
+  })
+
+  it('should report a `close` hook that throws', async () => {
+    const nuxt = createNuxt()
+    nuxt.close = () => Promise.reject(new Error('close exploded'))
+    loadNuxt.mockImplementationOnce(() => Promise.resolve(nuxt))
+    const server = createServer()
+    await server.init()
+    const failure = new Promise<Error>(resolve => server.once('loading:error', resolve))
+
+    await server.load(true, { type: 'shortcut' })
+
+    await expect(failure).resolves.toMatchObject({ message: 'close exploded' })
+  })
+
   it('should update the lock file when the build directory moves', async () => {
     const server = createServer()
     await server.init()
 
-    loadNuxt.mockImplementation(() => Promise.resolve(createNuxt({ buildDir: join(cwd, '.other') })))
-    await server.load(true, { type: 'config', files: [join(cwd, 'nuxt.config.ts')] })
+    loadNuxt.mockImplementation(() => Promise.resolve(createNuxt({
+      buildDir: join(cwd, '.other'),
+    })))
+    await server.load(true, {
+      type: 'config',
+      files: [
+        join(cwd, 'nuxt.config.ts'),
+      ],
+    })
 
     expect(existsSync(join(cwd, '.other', 'nuxt.lock'))).toBe(true)
     expect(existsSync(join(cwd, '.nuxt', 'nuxt.lock'))).toBe(false)
+  })
+})
+
+describe('dev server error channel', () => {
+  afterEach(async () => {
+    await closeErrorChannel()
+  })
+
+  it('should clear every open error on a clean reload', async () => {
+    const server = createServer()
+    await server.init()
+
+    const compile = await createCliReport(new Error('compile broke'), { cwd })
+    const request = await createCliReport(new Error('route exploded'), { cwd })
+
+    const app = new BroadcastChannel(ERROR_BROADCAST_CHANNEL)
+    app.postMessage({ type: 'nuxt:dev:error:report', report: compile })
+    app.postMessage({ type: 'nuxt:dev:error:report', report: request, requestId: 'open-page' })
+    app.close()
+
+    const instance = await useErrorChannel()
+    await vi.waitUntil(() => instance.current?.id === request.id)
+
+    await server.load(true, { type: 'shortcut' })
+
+    expect(instance.current).toBeUndefined()
+  })
+
+  it('should forget the devtools dock a previous process registered', async () => {
+    const server = createServer()
+    await server.init()
+
+    const instance = await useErrorChannel()
+    const setDevTools = vi.spyOn(instance, 'setDevTools')
+    instance.setDevTools(true)
+
+    await server.load(true, { type: 'shortcut' })
+
+    expect(setDevTools).toHaveBeenCalledWith(false)
+  })
+
+  it('should forget the problem sets a previous process published', async () => {
+    const server = createServer()
+    await server.init()
+
+    const instance = await useErrorChannel()
+    const report = await createCliReport(new Error('typecheck problem'), { cwd })
+    instance.setProblems('typecheck', [report])
+    expect(instance.problems).toHaveLength(1)
+
+    await server.load(true, { type: 'shortcut' })
+
+    expect(instance.problems).toHaveLength(0)
   })
 })
 
@@ -360,6 +679,22 @@ describe('dev server listen options', () => {
     expect(server.listener.url).toMatch('http://127.0.0.1:')
   })
 
+  it('should treat a non-string `devServer.host` as unset', async () => {
+    const warn = vi.spyOn(logger, 'warn')
+    loadNuxt.mockImplementation(() => Promise.resolve(createNuxt({
+      devServer: { host: {} },
+    })))
+    const server = createServer({
+      listenOverrides: { port: 0, showURL: false, qr: false },
+    })
+
+    await server.init()
+
+    expect(server.listener.url).toMatch(/^http:\/\/localhost:\d+\/$/)
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('Invalid host'))
+    warn.mockRestore()
+  })
+
   it('should fail with actionable advice when the port is taken and strict', async () => {
     const first = createServer()
     await first.init()
@@ -367,7 +702,13 @@ describe('dev server listen options', () => {
 
     const second = createServer({
       cwd,
-      listenOverrides: { hostname: '127.0.0.1', port, strictPort: true, showURL: false, qr: false },
+      listenOverrides: {
+        hostname: '127.0.0.1',
+        port,
+        strictPort: true,
+        showURL: false,
+        qr: false,
+      },
     })
 
     await expect(second.init()).rejects.toThrow(/already in use/)
@@ -380,7 +721,12 @@ describe('dev server listen options', () => {
 
     const second = createServer({
       cwd: await makeTempDir(),
-      listenOverrides: { hostname: '127.0.0.1', port, showURL: false, qr: false },
+      listenOverrides: {
+        hostname: '127.0.0.1',
+        port,
+        showURL: false,
+        qr: false,
+      },
     })
     await second.init()
 
@@ -426,15 +772,235 @@ describe('dev server restart', () => {
   })
 })
 
+describe('dev server host check', () => {
+  function createNuxtWithHosts(allowedHosts: unknown) {
+    return createNuxt({
+      vite: {
+        server: { allowedHosts },
+      },
+    })
+  }
+
+  it('should allow the hosts in `vite.server.allowedHosts` on its own endpoints', async () => {
+    loadNuxt.mockImplementation(() => Promise.resolve(createNuxtWithHosts(['Alias.test'])))
+    const server = createServer()
+    await server.init()
+
+    await expect(statusForHost(server, 'alias.test:3000')).resolves.toBe(200)
+    await expect(statusForHost(server, 'other.test')).resolves.toBe(403)
+  })
+
+  it('should allow any host on its own endpoints for `vite.server.allowedHosts: true`', async () => {
+    loadNuxt.mockImplementation(() => Promise.resolve(createNuxtWithHosts(true)))
+    const server = createServer()
+    await server.init()
+
+    await expect(statusForHost(server, 'any.test')).resolves.toBe(200)
+  })
+
+  it('should allow the hosts in `devServer.allowedHosts` on its own endpoints', async () => {
+    loadNuxt.mockImplementation(() => Promise.resolve(createNuxt({
+      devServer: {
+        allowedHosts: ['Alias.test'],
+      },
+    })))
+    const server = createServer()
+    await server.init()
+
+    await expect(statusForHost(server, 'alias.test')).resolves.toBe(200)
+    await expect(statusForHost(server, 'other.test')).resolves.toBe(403)
+  })
+
+  it('should allow any host on its own endpoints for `devServer.allowedHosts: true`', async () => {
+    const nuxt = createNuxt({
+      devServer: { allowedHosts: true },
+      vite: {
+        server: {
+          allowedHosts: ['vite.test'],
+        },
+      },
+    })
+    loadNuxt.mockImplementation(() => Promise.resolve(nuxt))
+    const server = createServer()
+    await server.init()
+
+    await expect(statusForHost(server, 'any.test')).resolves.toBe(200)
+    expect(nuxt.options.devServer.allowedHosts).toBe(true)
+  })
+
+  it('should leave `devServer.cors` unset for `vite.server.allowedHosts: true`', async () => {
+    const nuxt = createNuxtWithHosts(true)
+    loadNuxt.mockImplementation(() => Promise.resolve(nuxt))
+    const server = createServer()
+    await server.init()
+
+    expect(nuxt.options.devServer.cors).toBeUndefined()
+  })
+
+  it('should keep the string entries of `vite.server.allowedHosts` when others are not strings', async () => {
+    loadNuxt.mockImplementation(() => Promise.resolve(createNuxtWithHosts([42, null, 'alias.test'])))
+    const server = createServer()
+    await server.init()
+
+    await expect(statusForHost(server, 'alias.test')).resolves.toBe(200)
+  })
+
+  it('should remember `vite.server.allowedHosts` for the next run', async () => {
+    await mkdir(join(cwd, 'node_modules'))
+    loadNuxt.mockImplementation(() => Promise.resolve(createNuxtWithHosts(['alias.test', 42])))
+    const server = createServer()
+    await server.init()
+
+    expect(loadDevServerHint(cwd)?.allowedHosts).toEqual(['alias.test'])
+  })
+
+  it('should remember `devServer.allowedHosts` for the next run', async () => {
+    await mkdir(join(cwd, 'node_modules'))
+    loadNuxt.mockImplementation(() => Promise.resolve(createNuxt({
+      devServer: {
+        allowedHosts: ['alias.test'],
+      },
+      vite: {
+        server: {
+          allowedHosts: ['vite.test'],
+        },
+      },
+    })))
+    const server = createServer()
+    await server.init()
+
+    expect(loadDevServerHint(cwd)?.allowedHosts).toEqual(['alias.test', 'vite.test'])
+  })
+
+  it('should allow the remembered `vite.server.allowedHosts` before the config loads', async () => {
+    await mkdir(join(cwd, 'node_modules'))
+    saveDevServerHint(cwd, {
+      allowedHosts: ['.example.test'],
+    })
+    const { promise: loaded, resolve } = Promise.withResolvers<FakeNuxt>()
+    loadNuxt.mockImplementation(() => loaded)
+    const server = createServer()
+    const listening = new Promise<void>(resolve => server.once('listening', () => resolve()))
+    const started = server.init()
+    await listening
+
+    await expect(statusForHost(server, 'app.example.test')).resolves.toBe(200)
+    await expect(statusForHost(server, 'other.test')).resolves.toBe(403)
+
+    resolve(createNuxt())
+    await started
+    await expect(statusForHost(server, 'app.example.test')).resolves.toBe(403)
+  })
+
+  it('should follow `vite.server.allowedHosts` across config reloads', async () => {
+    const server = createServer()
+    await server.init()
+    await expect(statusForHost(server, 'alias.test')).resolves.toBe(403)
+
+    loadNuxt.mockImplementation(() => Promise.resolve(createNuxtWithHosts(['alias.test'])))
+    await server.load(true, {
+      type: 'config',
+      files: [
+        join(cwd, 'nuxt.config.ts'),
+      ],
+    })
+    await expect(statusForHost(server, 'alias.test')).resolves.toBe(200)
+
+    loadNuxt.mockImplementation(() => Promise.resolve(createNuxt()))
+    await server.load(true, {
+      type: 'config',
+      files: [
+        join(cwd, 'nuxt.config.ts'),
+      ],
+    })
+    await expect(statusForHost(server, 'alias.test')).resolves.toBe(403)
+  })
+
+  it('should keep the hosts of the last loaded config when a reload fails', async () => {
+    loadNuxt.mockImplementation(() => Promise.resolve(createNuxtWithHosts(['alias.test'])))
+    const server = createServer()
+    await server.init()
+
+    loadNuxt.mockImplementation(() => Promise.reject(new Error('broken on reload')))
+    await server.load(true, {
+      type: 'config',
+      files: [
+        join(cwd, 'nuxt.config.ts'),
+      ],
+    })
+
+    // 500 is the load-failure page, so the host check let the request through.
+    await expect(statusForHost(server, 'alias.test', '/')).resolves.toBe(500)
+  })
+})
+
+describe('dev server allowed hosts', () => {
+  it('should add the listener hostnames to `devServer.allowedHosts` and `vite.server.allowedHosts`', async () => {
+    const nuxt = createNuxt({
+      devServer: {
+        allowedHosts: ['alias.test'],
+      },
+    })
+    loadNuxt.mockImplementation(() => Promise.resolve(nuxt))
+    const server = createServer()
+    await server.init()
+
+    expect(nuxt.options.devServer.allowedHosts).toEqual(['alias.test', '127.0.0.1'])
+    expect(nuxt.options.vite.server.allowedHosts).toEqual(['127.0.0.1'])
+  })
+
+  it('should allow any host in `devServer.allowedHosts` and `vite.server.allowedHosts` for `--public`', async () => {
+    const nuxt = createNuxt({
+      devServer: {
+        allowedHosts: ['alias.test'],
+      },
+      vite: { server: {} },
+    })
+    loadNuxt.mockImplementation(() => Promise.resolve(nuxt))
+    const server = createServer({
+      listenOverrides: {
+        hostname: '127.0.0.1',
+        port: 0,
+        public: true,
+        showURL: false,
+        qr: false,
+      },
+    })
+    await server.init()
+
+    expect(nuxt.options.devServer.allowedHosts).toBe(true)
+    expect(nuxt.options.vite.server.allowedHosts).toBe(true)
+  })
+
+  it('should pass the listener hostnames as `devServer.allowedHosts` defaults on reload', async () => {
+    const server = createServer()
+    await server.init()
+
+    await server.load(true, { type: 'shortcut' })
+
+    const { defaults } = loadNuxt.mock.lastCall![0]
+    expect(defaults.devServer.allowedHosts).toEqual(['127.0.0.1'])
+    expect(defaults.vite.server.allowedHosts).toEqual(['127.0.0.1'])
+  })
+})
+
 describe('dev server config reload', () => {
   function stubConfigDiff(changedKeys: string[]) {
-    diffNuxtConfig.mockImplementation(() => changedKeys.map(label => ({ type: 'changed', path: label.split('.'), label })))
+    diffNuxtConfig.mockImplementation(() => changedKeys.map(label => ({
+      type: 'changed',
+      path: label.split('.'),
+      label,
+    })))
     loadNuxtConfig.mockImplementation(async (options: { onConfigResolved?: (ctx: { rawConfig: Record<string, unknown> }) => void }) => {
-      await options.onConfigResolved?.({ rawConfig: { revision: changedKeys.length } })
+      await options.onConfigResolved?.({
+        rawConfig: { revision: changedKeys.length },
+      })
       return {}
     })
     loadNuxt.mockImplementation(async (options: { onConfigResolved?: (ctx: { rawConfig: Record<string, unknown> }) => void }) => {
-      await options.onConfigResolved?.({ rawConfig: { revision: 0 } })
+      await options.onConfigResolved?.({
+        rawConfig: { revision: 0 },
+      })
       return createNuxt()
     })
   }
@@ -445,7 +1011,12 @@ describe('dev server config reload', () => {
     await server.init()
     loadNuxt.mockClear()
 
-    server.scheduleReload({ type: 'config', files: [join(cwd, 'nuxt.config.ts')] })
+    server.scheduleReload({
+      type: 'config',
+      files: [
+        join(cwd, 'nuxt.config.ts'),
+      ],
+    })
     await vi.waitFor(() => expect(loadNuxtConfig).toHaveBeenCalled())
 
     expect(loadNuxt).not.toHaveBeenCalled()
@@ -457,7 +1028,12 @@ describe('dev server config reload', () => {
     await server.init()
     loadNuxt.mockClear()
 
-    server.scheduleReload({ type: 'config', files: [join(cwd, 'nuxt.config.ts')] })
+    server.scheduleReload({
+      type: 'config',
+      files: [
+        join(cwd, 'nuxt.config.ts'),
+      ],
+    })
 
     await vi.waitFor(() => expect(loadNuxt).toHaveBeenCalledTimes(1))
   })
@@ -468,7 +1044,12 @@ describe('dev server config reload', () => {
     const server = createServer()
     await server.init()
 
-    server.scheduleReload({ type: 'config', files: [join(cwd, 'nuxt.config.ts')] })
+    server.scheduleReload({
+      type: 'config',
+      files: [
+        join(cwd, 'nuxt.config.ts'),
+      ],
+    })
 
     await vi.waitFor(() => expect(info).toHaveBeenCalledWith(expect.stringContaining('`runtimeConfig.public.foo` updated')))
     info.mockRestore()
@@ -687,12 +1268,21 @@ describe('dev server websocket upgrades', () => {
       response += chunk
     })
     const closed = new Promise<void>(resolve => client.once('close', () => resolve()))
-    client.write(`GET ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n${protocol ? `Sec-WebSocket-Protocol: ${protocol}\r\n` : ''}Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n`)
-    return { client, closed, response: () => response }
+    client.write(`GET ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n${protocol
+      ? `Sec-WebSocket-Protocol: ${protocol}\r\n`
+      : ''}Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n`)
+    return {
+      client,
+      closed,
+      response: () => response,
+    }
   }
 
   function expectClosedPromptly(closed: Promise<void>) {
-    return expect(Promise.race([closed.then(() => 'closed'), new Promise(resolve => setTimeout(resolve, 2000, 'pending'))])).resolves.toBe('closed')
+    return expect(Promise.race([
+      closed.then(() => 'closed'),
+      new Promise(resolve => setTimeout(resolve, 2000, 'pending')),
+    ])).resolves.toBe('closed')
   }
 
   function accept(_req: unknown, socket: Socket) {
@@ -704,14 +1294,18 @@ describe('dev server websocket upgrades', () => {
     const config = { server }
     await nuxt.callHook('vite:extend', { config })
     const base = '/_nuxt/'
-    const hmrBase = server.ws.path ? join(base, server.ws.path) : base
+    const hmrBase = server.ws.path
+      ? join(base, server.ws.path)
+      : base
     server.ws.server.on('upgrade', (req: import('node:http').IncomingMessage, socket: Socket) => {
       const protocol = req.headers['sec-websocket-protocol']
       if ((protocol === 'vite-hmr' || protocol === 'vite-ping') && new URL(`http://example.com${req.url}`).pathname === hmrBase) {
         accept(req, socket)
       }
     })
-    await nuxt.callHook('vite:serverCreated', { config: { base } }, { isClient: true, isServer: false })
+    await nuxt.callHook('vite:serverCreated', {
+      config: { base },
+    }, { isClient: true, isServer: false })
   }
 
   async function startServer(nuxt: FakeNuxt) {
@@ -750,8 +1344,12 @@ describe('dev server websocket upgrades', () => {
   it('should close Vite HMR upgrades before Vite attaches when the SSR Vite server exists', async () => {
     const nuxt = createNuxt()
     const server = await startServer(nuxt)
-    await nuxt.callHook('vite:extend', { config: { server: {} } })
-    await nuxt.callHook('vite:serverCreated', { config: { base: '/_nuxt/' } }, { isClient: false, isServer: true })
+    await nuxt.callHook('vite:extend', {
+      config: { server: {} },
+    })
+    await nuxt.callHook('vite:serverCreated', {
+      config: { base: '/_nuxt/' },
+    }, { isClient: false, isServer: true })
 
     const { closed } = upgrade(server, '/_nuxt/')
     await expectClosedPromptly(closed)
@@ -783,8 +1381,18 @@ describe('dev server websocket upgrades', () => {
   })
 
   it.each([
-    ['ws', { ws: { path: 'hmr' } }],
-    ['hmr', { hmr: { path: 'hmr' } }],
+    [
+      'ws',
+      {
+        ws: { path: 'hmr' },
+      },
+    ],
+    [
+      'hmr',
+      {
+        hmr: { path: 'hmr' },
+      },
+    ],
   ])('should hand Vite HMR upgrades on a custom %s path to Vite', async (_key, viteServer) => {
     const nuxt = createNuxt()
     const nitroUpgrade = vi.fn()
@@ -867,7 +1475,14 @@ describe('dev server websocket upgrades', () => {
     client.destroy()
   })
 
-  it.each([undefined, 'vite', 'webpack', 'rspack', '@nuxt/webpack-builder', '@nuxt/rspack-builder'])('should leave asset upgrades to the bundler with %s', async (builder) => {
+  it.each([
+    undefined,
+    'vite',
+    'webpack',
+    'rspack',
+    '@nuxt/webpack-builder',
+    '@nuxt/rspack-builder',
+  ])('should leave asset upgrades to the bundler with %s', async (builder) => {
     const nuxt = createNuxt({ builder })
     const nitroUpgrade = vi.fn((_req: unknown, socket: Socket) => socket.destroy())
     Object.assign(nuxt.server, { upgrade: nitroUpgrade })
@@ -911,5 +1526,41 @@ describe('dev server websocket upgrades', () => {
     const { closed, response } = upgrade(server, '/_nuxt/')
     await expectClosedPromptly(closed)
     expect(response()).toBe('')
+  })
+
+  it('should route upgrades to the new instance when a `close` hook settles after a reload', async () => {
+    let release: (() => void) | undefined
+    let closing: Promise<void> | undefined
+    const first = createNuxt()
+    first.hook('close', () => new Promise<void>((resolve) => {
+      release = resolve
+    }))
+    first.close = () => closing = first.callHook('close')
+    const server = await startServer(first)
+    const second = createNuxt()
+    const nitroUpgrade = vi.fn(accept)
+    Object.assign(second.server, { upgrade: nitroUpgrade })
+    loadNuxt.mockImplementation(() => Promise.resolve(second))
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout'],
+    })
+    try {
+      const reload = server.load(true, { type: 'shortcut' })
+      await vi.advanceTimersByTimeAsync(10_000)
+      await reload
+    }
+    finally {
+      vi.useRealTimers()
+    }
+    release?.()
+    await closing
+
+    const { client, response } = upgrade(server, '/_ws', null)
+    await vi.waitFor(() => expect(response()).toContain('101 Switching Protocols'))
+    expect(nitroUpgrade).toHaveBeenCalledTimes(1)
+    client.destroy()
+    warn.mockRestore()
   })
 })

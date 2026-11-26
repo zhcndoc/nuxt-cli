@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { ReportContext } from '../../src/dev/error-channel'
 
 import { existsSync } from 'node:fs'
-import { chmod, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
@@ -52,14 +52,19 @@ function createResponse() {
       return this
     },
   }
-  return { res: res as unknown as ServerResponse, headers: res.headers, chunks, statusOf: () => res.statusCode }
+  return {
+    res: res as unknown as ServerResponse,
+    headers: res.headers,
+    chunks,
+    statusOf: () => res.statusCode,
+  }
 }
 
 function request(url: string) {
   return {
     url,
     method: 'GET',
-    headers: { accept: 'text/html' },
+    headers: { accept: 'text/html', host: 'localhost:3000' },
     rawHeaders: [],
     socket: { remoteAddress: '127.0.0.1' },
     on: () => {},
@@ -67,7 +72,9 @@ function request(url: string) {
 }
 
 function openRequest(headers: Record<string, string>, file = '/etc/passwd') {
-  return Object.assign(Readable.from([JSON.stringify({ file })]), {
+  return Object.assign(Readable.from([
+    JSON.stringify({ file }),
+  ]), {
     url: `${DEFAULT_ERROR_CHANNEL}/open`,
     method: 'POST',
     headers: { 'host': 'localhost:3000', 'content-type': 'application/json', ...headers },
@@ -96,14 +103,20 @@ async function createProject() {
 async function waitForOpened(opened: string): Promise<string> {
   let recorded = ''
   await vi.waitUntil(async () => {
-    recorded = existsSync(opened) ? await readFile(opened, 'utf8') : ''
+    recorded = existsSync(opened)
+      ? await readFile(opened, 'utf8')
+      : ''
     return recorded.length > 0
   })
   return recorded
 }
 
 function createServer() {
-  return new NuxtDevServer({ cwd: process.cwd(), dotenv: {}, overrides: {} })
+  return new NuxtDevServer({
+    cwd: process.cwd(),
+    dotenv: {},
+    overrides: {},
+  })
 }
 
 afterEach(async () => {
@@ -136,30 +149,90 @@ describe('the forwarding protocol', () => {
     expect(isDevErrorMessage({ type: 'nuxt:dev:error:report', report: {} })).toBe(true)
     expect(isDevErrorMessage({ type: 'nuxt:dev:error:clear' })).toBe(true)
     expect(isDevErrorMessage({ type: 'nuxt:dev:error:warning', report: {} })).toBe(true)
+    expect(isDevErrorMessage({ type: 'nuxt:dev:error:warning:clear' })).toBe(true)
+    expect(isDevErrorMessage({ type: 'nuxt:dev:error:warning:clear', id: 'w1' })).toBe(true)
     expect(isDevErrorMessage({ type: 'nuxt:internal:dev:log' })).toBe(false)
     expect(isDevErrorMessage({ type: 'nuxt:dev:error:sync' })).toBe(false)
     expect(isDevErrorMessage({ type: 'nuxt:dev:error:report', report: {}, request: 'GET /ok' })).toBe(true)
     expect(isDevErrorMessage({ type: 'nuxt:dev:error:report', report: {}, request: 7 })).toBe(false)
+    expect(isDevErrorMessage({ type: 'nuxt:dev:error:clear', requestId: 'page-a' })).toBe(true)
+    expect(isDevErrorMessage({ type: 'nuxt:dev:error:clear', request: 'GET /ok' })).toBe(true)
+    expect(isDevErrorMessage({ type: 'nuxt:dev:error:clear', requestId: 7 })).toBe(false)
+    expect(isDevErrorMessage({ type: 'nuxt:dev:error:clear', request: 7 })).toBe(false)
     expect(isDevErrorMessage(undefined)).toBe(false)
   })
 
   it('should only accept a log entry the drawer can show', () => {
-    expect(isDevErrorMessage({ type: 'nuxt:dev:error:log', entry: { level: 'info', text: 'ready', timestamp: 1 } })).toBe(true)
-    expect(isDevErrorMessage({ type: 'nuxt:dev:error:log', entry: { level: 'shout', text: 'ready' } })).toBe(false)
-    expect(isDevErrorMessage({ type: 'nuxt:dev:error:log', entry: { level: 'info', text: 42 } })).toBe(false)
+    expect(isDevErrorMessage({
+      type: 'nuxt:dev:error:log',
+      entry: { level: 'info', text: 'ready', timestamp: 1 },
+    })).toBe(true)
+    expect(isDevErrorMessage({
+      type: 'nuxt:dev:error:log',
+      entry: { level: 'shout', text: 'ready' },
+    })).toBe(false)
+    expect(isDevErrorMessage({
+      type: 'nuxt:dev:error:log',
+      entry: { level: 'info', text: 42 },
+    })).toBe(false)
     expect(isDevErrorMessage({ type: 'nuxt:dev:error:log', entry: null })).toBe(false)
     expect(isDevErrorMessage({ type: 'nuxt:dev:error:log' })).toBe(false)
   })
 
   it('should only accept a progress update the bar can draw', () => {
-    expect(isDevErrorMessage({ type: 'nuxt:dev:error:progress', progress: { phase: 'transform' } })).toBe(true)
-    expect(isDevErrorMessage({ type: 'nuxt:dev:error:progress', progress: { phase: 'transform', percent: 100, message: 'Rebuilding' } })).toBe(true)
-    expect(isDevErrorMessage({ type: 'nuxt:dev:error:progress', progress: { phase: 7 } })).toBe(false)
-    expect(isDevErrorMessage({ type: 'nuxt:dev:error:progress', progress: { phase: 'transform', percent: Number.NaN } })).toBe(false)
-    expect(isDevErrorMessage({ type: 'nuxt:dev:error:progress', progress: { phase: 'transform', percent: '50' } })).toBe(false)
-    expect(isDevErrorMessage({ type: 'nuxt:dev:error:progress', progress: { phase: 'transform', message: 3 } })).toBe(false)
+    expect(isDevErrorMessage({
+      type: 'nuxt:dev:error:progress',
+      progress: { phase: 'transform' },
+    })).toBe(true)
+    expect(isDevErrorMessage({
+      type: 'nuxt:dev:error:progress',
+      progress: { phase: 'transform', percent: 100, message: 'Rebuilding' },
+    })).toBe(true)
+    expect(isDevErrorMessage({
+      type: 'nuxt:dev:error:progress',
+      progress: { phase: 7 },
+    })).toBe(false)
+    expect(isDevErrorMessage({
+      type: 'nuxt:dev:error:progress',
+      progress: { phase: 'transform', percent: Number.NaN },
+    })).toBe(false)
+    expect(isDevErrorMessage({
+      type: 'nuxt:dev:error:progress',
+      progress: { phase: 'transform', percent: '50' },
+    })).toBe(false)
+    expect(isDevErrorMessage({
+      type: 'nuxt:dev:error:progress',
+      progress: { phase: 'transform', message: 3 },
+    })).toBe(false)
     expect(isDevErrorMessage({ type: 'nuxt:dev:error:progress', progress: null })).toBe(false)
     expect(isDevErrorMessage({ type: 'nuxt:dev:error:progress' })).toBe(false)
+  })
+
+  it('should only accept a problem set the channel can show', () => {
+    expect(isDevErrorMessage({ type: 'nuxt:dev:error:problems', source: 'vite', reports: [] })).toBe(true)
+    expect(isDevErrorMessage({
+      type: 'nuxt:dev:error:problems',
+      source: 'vite',
+      reports: [{}],
+      meta: { label: 'Vite' },
+    })).toBe(true)
+    expect(isDevErrorMessage({ type: 'nuxt:dev:error:problems:clear' })).toBe(true)
+    expect(isDevErrorMessage({ type: 'nuxt:dev:error:problems:clear', source: 'vite' })).toBe(true)
+    expect(isDevErrorMessage({
+      type: 'nuxt:dev:error:problems',
+      source: 7,
+      reports: [{}],
+    })).toBe(false)
+    expect(isDevErrorMessage({ type: 'nuxt:dev:error:problems', source: 'vite', reports: 'boom' })).toBe(false)
+    expect(isDevErrorMessage({ type: 'nuxt:dev:error:problems', source: 'vite' })).toBe(false)
+    expect(isDevErrorMessage({ type: 'nuxt:dev:error:problems:clear', source: 7 })).toBe(false)
+  })
+
+  it('should only accept a devtools registration with a boolean', () => {
+    expect(isDevErrorMessage({ type: 'nuxt:dev:error:devtools', registered: true })).toBe(true)
+    expect(isDevErrorMessage({ type: 'nuxt:dev:error:devtools', registered: false })).toBe(true)
+    expect(isDevErrorMessage({ type: 'nuxt:dev:error:devtools', registered: 1 })).toBe(false)
+    expect(isDevErrorMessage({ type: 'nuxt:dev:error:devtools' })).toBe(false)
   })
 })
 
@@ -193,7 +266,12 @@ describe('toBuildProgress', () => {
   }
 
   it('should round the phase progress to a whole percentage', () => {
-    expect(toBuildProgress(snapshot)).toEqual({ phase: 'bundle', percent: 67, message: 'Bundling app', source: 'cli' })
+    expect(toBuildProgress(snapshot)).toEqual({
+      phase: 'bundle',
+      percent: 67,
+      message: 'Bundling app',
+      source: 'cli',
+    })
   })
 
   it('should leave the bar indeterminate once the load has failed', () => {
@@ -210,36 +288,85 @@ function compileReport(file: string, line: number, column: number) {
     frames: [],
     sections: [],
     timestamp: Date.now(),
-    causes: [{
-      id: 'compile',
-      kind: 'compile',
-      name: 'CompileError',
-      message: 'unexpected token',
-      frames: [{ file, line, column, type: 'app' }],
-      sections: [],
-      causes: [],
-      timestamp: Date.now(),
-    }],
+    causes: [
+      {
+        id: 'compile',
+        kind: 'compile',
+        name: 'CompileError',
+        message: 'unexpected token',
+        frames: [
+          { file, line, column, type: 'app' },
+        ],
+        sections: [],
+        causes: [],
+        timestamp: Date.now(),
+      },
+    ],
   } as unknown as ErrorReport
 }
 
 describe('createCliReport', () => {
-  it('should render the source a config syntax error failed on', async () => {
+  it.each([
+    [
+      'a parser frame',
+      (dir: string) => `\n    at parse (${join(dir, 'node_modules/oxc-parser/index.js')}:1:1)`,
+    ],
+    [
+      'no frames',
+      () => '',
+    ],
+  ])('should render the source a config syntax error failed on, with %s', async (_, frames) => {
     const dir = await mkdtemp(join(tmpdir(), 'nuxi-config-'))
     const file = join(dir, 'nuxt.config.ts')
     await writeFile(file, 'export default defineNuxtConfig({\n  a: 1\n  b: 2\n})\n')
-    const report = await createCliReport(new Error(`ParseError: Unexpected token\n ${file}:3:2`), { cwd: dir })
+    const message = `ParseError: Unexpected token\n ${file}:3:2`
+    const error = Object.assign(new Error(message), { stack: `Error: ${message}${frames(dir)}` })
+    const report = await createCliReport(error, { cwd: dir })
 
     expect(report.kind).toBe('compile')
     expect(report.name).toBe('ParseError')
     expect(report.frames[0]?.file).toBe(normalize(file))
     expect(report.frames[0]?.snippet?.lines.join('\n')).toContain('b: 2')
   })
+
+  it('should read a source inside the workspace root but outside cwd', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'nuxi-workspace-'))
+    const cwd = join(workspace, 'app')
+    await mkdir(cwd, { recursive: true })
+    const file = join(workspace, 'packages', 'shared.ts')
+    await mkdir(join(workspace, 'packages'), { recursive: true })
+    await writeFile(file, 'export const shared = 1\n  broken\n')
+    const message = `ParseError: Unexpected token\n ${file}:2:3`
+    const error = Object.assign(new Error(message), {
+      stack: `Error: ${message}\n    at parse (${join(workspace, 'node_modules/oxc-parser/index.js')}:1:1)`,
+    })
+    const report = await createCliReport(error, { cwd, workspaceDir: workspace })
+
+    expect(report.kind).toBe('compile')
+    expect(report.frames[0]?.file).toBe(normalize(file))
+    expect(report.frames[0]?.snippet?.lines.join('\n')).toContain('broken')
+  })
+
+  it('should not read a source outside the project and workspace roots', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'nuxi-workspace-'))
+    const cwd = join(workspace, 'app')
+    await mkdir(cwd, { recursive: true })
+    const outside = await mkdtemp(join(tmpdir(), 'nuxi-outside-'))
+    const file = join(outside, 'secret.ts')
+    await writeFile(file, 'export const secret = 1\n')
+
+    const error = Object.assign(new Error('boom'), { stack: `Error: boom\n    at app (${file}:1:10)` })
+    const report = await createCliReport(error, { cwd, workspaceDir: workspace })
+
+    expect(report.frames.find(frame => frame.file === normalize(file))?.snippet).toBeUndefined()
+  })
 })
 
 describe('renderErrorPage', () => {
   it('should render a page that subscribes to the channel it is served from', async () => {
-    const report = await createCliReport(new Error('rendered'), { cwd: process.cwd() })
+    const report = await createCliReport(new Error('rendered'), {
+      cwd: process.cwd(),
+    })
 
     const html = await renderErrorPage(report, { channel: DEFAULT_ERROR_CHANNEL })
     const state = JSON.parse(html.match(/<script type="application\/json">(?<state>.*?)<\/script>/s)?.groups?.state ?? '{}')
@@ -251,7 +378,13 @@ describe('renderErrorPage', () => {
 })
 
 describe('formatReportForTerminal', () => {
-  const report = { id: 'a', name: 'SyntaxError', message: 'Illegal \'/\' in tags.', location: 'app/app.vue:16:6', ansi: 'the frame' }
+  const report = {
+    id: 'a',
+    name: 'SyntaxError',
+    message: 'Illegal \'/\' in tags.',
+    location: 'app/app.vue:16:6',
+    ansi: 'the frame',
+  }
 
   it('should head a report with the request that hit it', () => {
     expect(formatReportForTerminal({ ...report, request: 'GET /ok?a=1' })).toBe('[request error] [GET] /ok?a=1\n\n  the frame')
@@ -270,10 +403,42 @@ describe('summariseReport', () => {
     const report = await createCliReport(error, { cwd: repoRoot })
     const summary = await summariseReport(report, { requestId: 'r7' }, repoRoot)
 
-    expect(summary).toMatchObject({ id: report.id, name: 'Error', message: 'summarise me', requestId: 'r7' })
+    expect(summary).toMatchObject({
+      id: report.id,
+      name: 'Error',
+      message: 'summarise me',
+      requestId: 'r7',
+    })
     expect(summary.file).toContain('error-channel.spec.ts')
     expect(summary.location).toMatch(/^\.\/packages\/nuxt-cli\/test\/unit\/error-channel\.spec\.ts:\d+:\d+$/)
     expect(summary.ansi).toContain('summarise me')
+  })
+
+  it('should strip control characters from every field it prints', async () => {
+    const report = {
+      ...compileReport('/app/\u001B[2Japp.vue', 3, 1),
+      causes: [],
+      name: '\u001B[31mEvil',
+      message: '\u001B]52;c;aGk=\u0007boom\u001B[2J',
+      frames: [
+        {
+          file: '/app/\u001B[2Japp.vue',
+          line: 3,
+          column: 1,
+          type: 'app',
+        },
+      ],
+    } as unknown as ErrorReport
+    const summary = await summariseReport(report, { request: 'GET /\u001B[2J' }, '/app')
+
+    expect(summary).toMatchObject({
+      name: '[31mEvil',
+      message: ']52;c;aGk=boom[2J',
+      location: './[2Japp.vue:3:1',
+      request: 'GET /[2J',
+    })
+    expect(summary.ansi).not.toContain('\u001B]52')
+    expect(summary.ansi).not.toContain('\u001B[2J')
   })
 })
 
@@ -310,9 +475,13 @@ describe('the CLI-owned error channel', () => {
 
   it('should publish and serve a report the app forwards', async () => {
     const server = createServer()
-    const report = await createCliReport(new Error('forwarded from the app'), { cwd: process.cwd() })
+    const report = await createCliReport(new Error('forwarded from the app'), {
+      cwd: process.cwd(),
+    })
     const reports: Array<{ report: ErrorReport, context: ReportContext }> = []
-    const close = openErrorBridge({ onReport: (report, context) => reports.push({ report, context }) })
+    const close = openErrorBridge({
+      onReport: (report, context) => reports.push({ report, context }),
+    })
 
     const app = new BroadcastChannel(ERROR_BROADCAST_CHANNEL)
     app.postMessage({ type: 'nuxt:dev:error:report', report, requestId: 3 })
@@ -333,12 +502,19 @@ describe('the CLI-owned error channel', () => {
     const instance = await useErrorChannel()
     const setError = vi.spyOn(instance, 'setError')
     const reports: ErrorReport[] = []
-    const close = openErrorBridge({ onReport: report => reports.push(report) })
+    const close = openErrorBridge({
+      onReport: report => reports.push(report),
+    })
 
     const app = new BroadcastChannel(ERROR_BROADCAST_CHANNEL)
     const requestReport = compileReport('/app/app.vue', 3, 1)
     const buildReport = compileReport('/app/pages/index.vue', 5, 2)
-    app.postMessage({ type: 'nuxt:dev:error:report', report: requestReport, requestId: 'r4', request: 'GET /broken?x=1' })
+    app.postMessage({
+      type: 'nuxt:dev:error:report',
+      report: requestReport,
+      requestId: 'r4',
+      request: 'GET /broken?x=1',
+    })
     app.postMessage({ type: 'nuxt:dev:error:report', report: buildReport })
     app.close()
 
@@ -348,17 +524,77 @@ describe('the CLI-owned error channel', () => {
     expect(setError).toHaveBeenNthCalledWith(2, buildReport, undefined, undefined)
   })
 
+  it('should retire an error only for the request the app names when clearing', async () => {
+    const instance = await useErrorChannel()
+    const report = compileReport('/app/app.vue', 3, 1)
+    const close = openErrorBridge()
+
+    const app = new BroadcastChannel(ERROR_BROADCAST_CHANNEL)
+    const pageA = createResponse()
+    const pageB = createResponse()
+    await instance.handler(request(`${DEFAULT_ERROR_CHANNEL}/events?requestId=page-a`), pageA.res)
+    await instance.handler(request(`${DEFAULT_ERROR_CHANNEL}/events?requestId=page-b`), pageB.res)
+
+    app.postMessage({ type: 'nuxt:dev:error:report', report, requestId: 'page-a' })
+    app.postMessage({ type: 'nuxt:dev:error:report', report, requestId: 'page-b' })
+    await vi.waitUntil(() => pageA.chunks.join('').includes('event: error:set') && pageB.chunks.join('').includes('event: error:set'))
+
+    app.postMessage({ type: 'nuxt:dev:error:clear', id: report.id, requestId: 'page-a' })
+    await vi.waitUntil(() => pageA.chunks.join('').includes('event: error:clear'))
+    close()
+    app.close()
+
+    expect(pageA.chunks.join('')).toContain('event: error:clear')
+    expect(pageB.chunks.join('')).not.toContain('event: error:clear')
+    expect(pageB.chunks.join('')).toContain(report.id)
+    expect(instance.current?.id).toBe(report.id)
+  })
+
+  it('should retire an error for every request when cleared without a scope', async () => {
+    const instance = await useErrorChannel()
+    const report = compileReport('/app/app.vue', 3, 1)
+    const close = openErrorBridge()
+
+    const app = new BroadcastChannel(ERROR_BROADCAST_CHANNEL)
+    const pageA = createResponse()
+    const pageB = createResponse()
+    await instance.handler(request(`${DEFAULT_ERROR_CHANNEL}/events?requestId=page-a`), pageA.res)
+    await instance.handler(request(`${DEFAULT_ERROR_CHANNEL}/events?requestId=page-b`), pageB.res)
+
+    app.postMessage({ type: 'nuxt:dev:error:report', report, requestId: 'page-a' })
+    app.postMessage({ type: 'nuxt:dev:error:report', report, requestId: 'page-b' })
+    await vi.waitUntil(() => pageA.chunks.join('').includes('event: error:set') && pageB.chunks.join('').includes('event: error:set'))
+
+    app.postMessage({ type: 'nuxt:dev:error:clear', id: report.id })
+    await vi.waitUntil(() => pageA.chunks.join('').includes('event: error:clear') && pageB.chunks.join('').includes('event: error:clear'))
+    close()
+    app.close()
+
+    expect(pageA.chunks.join('')).toContain('event: error:clear')
+    expect(pageB.chunks.join('')).toContain('event: error:clear')
+    expect(instance.current).toBeUndefined()
+  })
+
   it('should publish a log entry the app forwards, without telling the supervisor', async () => {
     createServer()
     const instance = await useErrorChannel()
     const log = vi.spyOn(instance, 'log')
     const reports: ErrorReport[] = []
     const cleared: Array<string | undefined> = []
-    const close = openErrorBridge({ onReport: report => reports.push(report), onClear: id => cleared.push(id) })
+    const close = openErrorBridge({
+      onReport: report => reports.push(report),
+      onClear: id => cleared.push(id),
+    })
 
     const app = new BroadcastChannel(ERROR_BROADCAST_CHANNEL)
-    app.postMessage({ type: 'nuxt:dev:error:log', entry: { level: 'warn', text: 'slow route', timestamp: 5 } })
-    app.postMessage({ type: 'nuxt:dev:error:log', entry: { level: 'nope', text: 'dropped' } })
+    app.postMessage({
+      type: 'nuxt:dev:error:log',
+      entry: { level: 'warn', text: 'slow route', timestamp: 5 },
+    })
+    app.postMessage({
+      type: 'nuxt:dev:error:log',
+      entry: { level: 'nope', text: 'dropped' },
+    })
     app.close()
 
     await vi.waitUntil(() => log.mock.calls.length === 1)
@@ -374,11 +610,20 @@ describe('the CLI-owned error channel', () => {
     const progress = vi.spyOn(instance, 'progress')
     const reports: ErrorReport[] = []
     const cleared: Array<string | undefined> = []
-    const close = openErrorBridge({ onReport: report => reports.push(report), onClear: id => cleared.push(id) })
+    const close = openErrorBridge({
+      onReport: report => reports.push(report),
+      onClear: id => cleared.push(id),
+    })
 
     const app = new BroadcastChannel(ERROR_BROADCAST_CHANNEL)
-    app.postMessage({ type: 'nuxt:dev:error:progress', progress: { phase: 'transform', message: 'Rebuilding' } })
-    app.postMessage({ type: 'nuxt:dev:error:progress', progress: { phase: 'transform', percent: 'done' } })
+    app.postMessage({
+      type: 'nuxt:dev:error:progress',
+      progress: { phase: 'transform', message: 'Rebuilding' },
+    })
+    app.postMessage({
+      type: 'nuxt:dev:error:progress',
+      progress: { phase: 'transform', percent: 'done' },
+    })
     app.close()
 
     await vi.waitUntil(() => progress.mock.calls.length === 1)
@@ -386,6 +631,102 @@ describe('the CLI-owned error channel', () => {
     expect(progress).toHaveBeenCalledWith({ phase: 'transform', message: 'Rebuilding', source: 'app' })
     expect(reports).toHaveLength(0)
     expect(cleared).toHaveLength(0)
+  })
+
+  it('should retire the warnings the app clears', async () => {
+    createServer()
+    const instance = await useErrorChannel()
+    const clearWarning = vi.spyOn(instance, 'clearWarning')
+    const close = openErrorBridge()
+
+    const app = new BroadcastChannel(ERROR_BROADCAST_CHANNEL)
+    app.postMessage({ type: 'nuxt:dev:error:warning:clear', id: 'w1' })
+    app.postMessage({ type: 'nuxt:dev:error:warning:clear' })
+    app.close()
+
+    await vi.waitUntil(() => clearWarning.mock.calls.length === 2)
+    close()
+    expect(clearWarning).toHaveBeenNthCalledWith(1, 'w1')
+    expect(clearWarning).toHaveBeenNthCalledWith(2, undefined)
+  })
+
+  it('should publish and retire the problem sets the app forwards', async () => {
+    createServer()
+    const instance = await useErrorChannel()
+    const close = openErrorBridge()
+
+    const vite = compileReport('/app/app.vue', 3, 1)
+    const newerVite = compileReport('/app/app.vue', 7, 1)
+    const typescript = compileReport('/app/pages/index.vue', 5, 2)
+
+    const app = new BroadcastChannel(ERROR_BROADCAST_CHANNEL)
+    app.postMessage({
+      type: 'nuxt:dev:error:problems',
+      source: 'vite',
+      reports: [vite],
+    })
+    app.postMessage({
+      type: 'nuxt:dev:error:problems',
+      source: 'typescript',
+      reports: [typescript],
+      meta: { label: 'TypeScript', url: '/__nuxt_dev__/problems/typescript', devtoolsDock: 'typescript:problems' },
+    })
+    app.postMessage({
+      type: 'nuxt:dev:error:problems',
+      source: 'vite',
+      reports: [newerVite],
+    })
+
+    await vi.waitUntil(() => instance.problems.find(set => set.source === 'vite')?.reports[0]?.id === newerVite.id && instance.problems.length === 2)
+    expect(instance.problems).toEqual([
+      {
+        source: 'vite',
+        reports: [newerVite],
+      },
+      {
+        source: 'typescript',
+        reports: [typescript],
+        label: 'TypeScript',
+        url: '/__nuxt_dev__/problems/typescript',
+        devtoolsDock: 'typescript:problems',
+      },
+    ])
+
+    app.postMessage({ type: 'nuxt:dev:error:problems:clear', source: 'vite' })
+    await vi.waitUntil(() => instance.problems.length === 1)
+    expect(instance.problems).toEqual([
+      {
+        source: 'typescript',
+        reports: [typescript],
+        label: 'TypeScript',
+        url: '/__nuxt_dev__/problems/typescript',
+        devtoolsDock: 'typescript:problems',
+      },
+    ])
+
+    app.postMessage({ type: 'nuxt:dev:error:problems:clear' })
+    await vi.waitUntil(() => instance.problems.length === 0)
+    expect(instance.problems).toEqual([])
+
+    close()
+    app.close()
+  })
+
+  it('should publish the devtools registration the app reports', async () => {
+    createServer()
+    const instance = await useErrorChannel()
+    const setDevTools = vi.spyOn(instance, 'setDevTools')
+    const close = openErrorBridge()
+
+    const app = new BroadcastChannel(ERROR_BROADCAST_CHANNEL)
+    app.postMessage({ type: 'nuxt:dev:error:devtools', registered: true })
+    app.postMessage({ type: 'nuxt:dev:error:devtools', registered: false })
+    app.close()
+
+    await vi.waitUntil(() => setDevTools.mock.calls.length === 2)
+    close()
+    expect(setDevTools).toHaveBeenNthCalledWith(1, true)
+    expect(setDevTools).toHaveBeenNthCalledWith(2, false)
   })
 
   it('should keep the CLI\'s own progress apart from what the app forwards', async () => {
@@ -396,7 +737,10 @@ describe('the CLI-owned error channel', () => {
 
     await publishCliProgress({ ...idleSnapshot, status: 'loading', progress: 0.5 })
     const app = new BroadcastChannel(ERROR_BROADCAST_CHANNEL)
-    app.postMessage({ type: 'nuxt:dev:error:progress', progress: { phase: 'transform', percent: 90, source: 'vite' } })
+    app.postMessage({
+      type: 'nuxt:dev:error:progress',
+      progress: { phase: 'transform', percent: 90, source: 'vite' },
+    })
     app.close()
 
     await vi.waitUntil(() => progress.mock.calls.length === 2)
@@ -407,7 +751,9 @@ describe('the CLI-owned error channel', () => {
   it('should stream the channel to a peer on another machine', async () => {
     const server = createServer()
     const { res, statusOf, chunks } = createResponse()
-    const remote = Object.assign(request(`${DEFAULT_ERROR_CHANNEL}/events?path=/`), { socket: { remoteAddress: '192.168.0.31' } })
+    const remote = Object.assign(request(`${DEFAULT_ERROR_CHANNEL}/events?path=/`), {
+      socket: { remoteAddress: '192.168.0.31' },
+    })
 
     await server.handler(remote, res)
 
@@ -418,7 +764,9 @@ describe('the CLI-owned error channel', () => {
   it('should refuse open-in-editor to a peer on another machine', async () => {
     const server = createServer()
     const { res, statusOf } = createResponse()
-    const remote = Object.assign(openRequest({}), { socket: { remoteAddress: '192.168.0.31' } })
+    const remote = Object.assign(openRequest({}), {
+      socket: { remoteAddress: '192.168.0.31' },
+    })
 
     await server.handler(remote as unknown as IncomingMessage, res)
 
@@ -427,16 +775,22 @@ describe('the CLI-owned error channel', () => {
 
   it('should keep another request\'s report away from a peer on another machine', async () => {
     const server = createServer()
-    const report = await createCliReport(new Error('boom from a page'), { cwd: process.cwd() })
+    const report = await createCliReport(new Error('boom from a page'), {
+      cwd: process.cwd(),
+    })
     const instance = await useErrorChannel()
     instance.setError(report, '7', 'GET /admin')
 
     const { res: streamRes, chunks } = createResponse()
-    const stream = Object.assign(request(`${DEFAULT_ERROR_CHANNEL}/events?path=/`), { socket: { remoteAddress: '192.168.0.31' } })
+    const stream = Object.assign(request(`${DEFAULT_ERROR_CHANNEL}/events?path=/`), {
+      socket: { remoteAddress: '192.168.0.31' },
+    })
     await server.handler(stream, streamRes)
 
     const { res, statusOf, chunks: body } = createResponse()
-    const remote = Object.assign(request(`${DEFAULT_ERROR_CHANNEL}/history/${report.id}?path=/`), { socket: { remoteAddress: '192.168.0.31' } })
+    const remote = Object.assign(request(`${DEFAULT_ERROR_CHANNEL}/history/${report.id}?path=/`), {
+      socket: { remoteAddress: '192.168.0.31' },
+    })
     await server.handler(remote, res)
 
     expect(chunks.join('')).not.toContain('boom from a page')
@@ -446,7 +800,9 @@ describe('the CLI-owned error channel', () => {
 
   it('should not let a peer on another machine enumerate its way to a report', async () => {
     const server = createServer()
-    const report = await createCliReport(new Error('boom from a page'), { cwd: process.cwd() })
+    const report = await createCliReport(new Error('boom from a page'), {
+      cwd: process.cwd(),
+    })
     const instance = await useErrorChannel()
     const raised = createRequest('GET /boom-page')
     instance.setError(report, raised.id, raised.label)
@@ -454,7 +810,9 @@ describe('the CLI-owned error channel', () => {
     for (let guess = 1; guess <= 25; guess++) {
       for (const scope of [`requestId=${guess}`, `requestId=${encodeURIComponent(`${guess} GET /boom-page`)}`, 'path=/boom-page']) {
         const { res, statusOf, chunks } = createResponse()
-        const remote = Object.assign(request(`${DEFAULT_ERROR_CHANNEL}/history/${report.id}?${scope}`), { socket: { remoteAddress: '192.168.0.31' } })
+        const remote = Object.assign(request(`${DEFAULT_ERROR_CHANNEL}/history/${report.id}?${scope}`), {
+          socket: { remoteAddress: '192.168.0.31' },
+        })
         await server.handler(remote, res)
 
         expect(statusOf()).toBe(404)
@@ -463,7 +821,9 @@ describe('the CLI-owned error channel', () => {
     }
 
     const { res, statusOf, chunks } = createResponse()
-    const owner = Object.assign(request(`${DEFAULT_ERROR_CHANNEL}/history/${report.id}?requestId=${raised.id}`), { socket: { remoteAddress: '192.168.0.31' } })
+    const owner = Object.assign(request(`${DEFAULT_ERROR_CHANNEL}/history/${report.id}?requestId=${raised.id}`), {
+      socket: { remoteAddress: '192.168.0.31' },
+    })
     await server.handler(owner, res)
 
     expect(statusOf()).toBe(200)
@@ -472,12 +832,16 @@ describe('the CLI-owned error channel', () => {
 
   it('should serve a report to the peer whose request raised it', async () => {
     const server = createServer()
-    const report = await createCliReport(new Error('boom from a page'), { cwd: process.cwd() })
+    const report = await createCliReport(new Error('boom from a page'), {
+      cwd: process.cwd(),
+    })
     const instance = await useErrorChannel()
     instance.setError(report, '7', 'GET /admin')
 
     const { res, statusOf, chunks } = createResponse()
-    const remote = Object.assign(request(`${DEFAULT_ERROR_CHANNEL}/history/${report.id}?requestId=7`), { socket: { remoteAddress: '192.168.0.31' } })
+    const remote = Object.assign(request(`${DEFAULT_ERROR_CHANNEL}/history/${report.id}?requestId=7`), {
+      socket: { remoteAddress: '192.168.0.31' },
+    })
     await server.handler(remote, res)
 
     expect(statusOf()).toBe(200)
@@ -486,7 +850,9 @@ describe('the CLI-owned error channel', () => {
 
   it('should serve a loopback peer the whole channel', async () => {
     const server = createServer()
-    const report = await createCliReport(new Error('boom from a page'), { cwd: process.cwd() })
+    const report = await createCliReport(new Error('boom from a page'), {
+      cwd: process.cwd(),
+    })
     const instance = await useErrorChannel()
     instance.setError(report, '7', 'GET /admin')
 
@@ -584,11 +950,21 @@ describe('the CLI-owned error channel', () => {
 
   it('should show the report of every failing request, in the order they arrive', async () => {
     const reports: Array<{ report: ErrorReport, context: ReportContext }> = []
-    const close = openErrorBridge({ onReport: (report, context) => reports.push({ report, context }) })
+    const close = openErrorBridge({
+      onReport: (report, context) => reports.push({ report, context }),
+    })
 
     const app = new BroadcastChannel(ERROR_BROADCAST_CHANNEL)
-    app.postMessage({ type: 'nuxt:dev:error:report', report: compileReport('/app/app.vue', 3, 1) })
-    app.postMessage({ type: 'nuxt:dev:error:report', report: compileReport('/app/app.vue', 3, 1), requestId: 2, request: 'GET /ok' })
+    app.postMessage({
+      type: 'nuxt:dev:error:report',
+      report: compileReport('/app/app.vue', 3, 1),
+    })
+    app.postMessage({
+      type: 'nuxt:dev:error:report',
+      report: compileReport('/app/app.vue', 3, 1),
+      requestId: 2,
+      request: 'GET /ok',
+    })
     app.close()
 
     await vi.waitUntil(() => reports.length === 2)
@@ -611,5 +987,35 @@ describe('the CLI-owned error channel', () => {
     await server.handler(request(DEFAULT_ERROR_CHANNEL), res)
 
     expect(statusOf()).toBe(404)
+  })
+
+  it('should serve the badge and overlay assets the dev page loads', async () => {
+    const server = createServer()
+    const assets = [
+      ['badge.js', 'text/javascript'],
+      ['client.js', 'text/javascript'],
+      ['client.css', 'text/css'],
+      ['devtools.js', 'text/javascript'],
+    ] as const
+
+    for (const [asset, type] of assets) {
+      const { res, statusOf, headers, chunks } = createResponse()
+      await server.handler(request(`${DEFAULT_ERROR_CHANNEL}/${asset}?v=1`), res)
+
+      expect(statusOf()).toBe(200)
+      expect(headers['content-type']).toContain(type)
+      expect(chunks.join('')).not.toBe('')
+    }
+  })
+
+  it('should serve the dock panel the dev page loads', async () => {
+    const server = createServer()
+    const { res, statusOf, headers, chunks } = createResponse()
+
+    await server.handler(request(`${DEFAULT_ERROR_CHANNEL}/panel`), res)
+
+    expect(statusOf()).toBe(200)
+    expect(headers['content-type']).toContain('text/html')
+    expect(chunks.join('')).not.toBe('')
   })
 })

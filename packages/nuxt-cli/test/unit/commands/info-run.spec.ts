@@ -9,7 +9,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import info, { formatJsonAsMarkdownTable } from '../../../src/commands/info'
 import { render, screen } from '../../utils/terminal'
 
-vi.mock('tinyclip', () => ({ writeText: () => Promise.reject(new Error('no clipboard')) }))
+vi.mock('tinyclip', () => ({
+  writeText: () => Promise.reject(new Error('no clipboard')),
+}))
 
 let cwd: string
 
@@ -22,7 +24,9 @@ afterEach(async () => {
 })
 
 async function runInfo(): Promise<string> {
-  const terminal = await render(() => runCommand(info, { rawArgs: [`--cwd=${cwd}`] }))
+  const terminal = await render(() => runCommand(info, {
+    rawArgs: [`--cwd=${cwd}`],
+  }))
   return screen(terminal)
 }
 
@@ -32,7 +36,9 @@ async function runInfoJSON(): Promise<any> {
     stdout += String(chunk)
     return true
   })
-  await runCommand(info, { rawArgs: [`--cwd=${cwd}`, '--json'] })
+  await runCommand(info, {
+    rawArgs: [`--cwd=${cwd}`, '--json'],
+  })
   return JSON.parse(stdout)
 }
 
@@ -94,6 +100,67 @@ describe('info command', () => {
     for (const row of table.trim().split('\n')) {
       expect(output).toContain(row)
     }
+  })
+
+  // Versions are declared so the fixtures resolve one even where nothing is installed.
+  it('should name Nitro as the default server builder', async () => {
+    await writeFile(join(cwd, 'package.json'), JSON.stringify({
+      name: 'app',
+      private: true,
+      dependencies: { nitropack: '2.13.6' },
+    }))
+
+    const payload = await runInfoJSON()
+
+    expect(payload.serverBuilder).toMatch(/^nitro@\d/)
+    expect(payload.nitroVersion).toMatch(/^\d/)
+  })
+
+  it('should honour an explicit `_nitroMajor` in `nuxt.config`', async () => {
+    await writeFile(join(cwd, 'package.json'), JSON.stringify({
+      name: 'app',
+      private: true,
+      dependencies: { nitro: '3.0.0', nitropack: '2.13.6' },
+    }))
+    await writeFile(join(cwd, 'nuxt.config.mjs'), `export default { _nitroMajor: 2 }`)
+
+    const payload = await runInfoJSON()
+
+    expect(payload.serverBuilder).toBe('nitro@2.13.6')
+    expect(payload.nitroVersion).toBe('2.13.6')
+  })
+
+  it.each(['@nuxt/vite-server', 'vite'])('should name the Vite server builder from `%s` without a version', async (builder) => {
+    await writeFile(join(cwd, 'package.json'), JSON.stringify({
+      name: 'app',
+      private: true,
+      dependencies: { '@nuxt/vite-server': '4.6.4' },
+    }))
+    await writeFile(join(cwd, 'nuxt.config.mjs'), `export default { server: { builder: '${builder}' } }`)
+
+    const payload = await runInfoJSON()
+
+    expect(payload.serverBuilder).toBe('vite')
+    expect(payload.nitroVersion).toBeNull()
+  })
+
+  it('should name a third-party server builder with its version', async () => {
+    await writeFile(join(cwd, 'package.json'), JSON.stringify({
+      name: 'app',
+      private: true,
+      dependencies: { 'my-server-builder': '1.2.3' },
+    }))
+    await writeFile(join(cwd, 'nuxt.config.mjs'), `export default { server: { builder: 'my-server-builder' } }`)
+
+    expect((await runInfoJSON()).serverBuilder).toBe('my-server-builder@1.2.3')
+  })
+
+  it('should name a local server builder by its path alone', async () => {
+    await writeFile(join(cwd, 'package.json'), JSON.stringify({ name: 'app', version: '9.9.9', private: true }))
+    await writeFile(join(cwd, 'server-builder.mjs'), 'export async function bundle() {}')
+    await writeFile(join(cwd, 'nuxt.config.mjs'), `export default { server: { builder: './server-builder.mjs' } }`)
+
+    expect((await runInfoJSON()).serverBuilder).toBe('./server-builder.mjs')
   })
 
   it('should still report on a project with no config', async () => {

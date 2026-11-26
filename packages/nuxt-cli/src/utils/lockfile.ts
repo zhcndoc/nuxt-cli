@@ -20,6 +20,8 @@ export interface LockInfo {
   port?: number
   hostname?: string
   url?: string
+  /** `app.baseURL` of a dev server, which `url` does not include. */
+  baseURL?: string
   /**
    * PID of the process supervising the holder, when the holder is a dev fork.
    * Signalling the holder alone would leave its supervisor running.
@@ -67,7 +69,9 @@ function lockPathFor(buildDir: string): string {
 /** The lock on `buildDir` when another process is currently holding it. */
 export function readActiveLock(buildDir: string): LockInfo | undefined {
   const info = readLock(buildDir)
-  return info && isLockActive(info) ? info : undefined
+  return info && isLockActive(info)
+    ? info
+    : undefined
 }
 
 /**
@@ -116,7 +120,9 @@ export function getTakeoverPid(buildDir: string): number | undefined {
     return undefined
   }
   // A claimer that gave up and exited never took anything over.
-  return isProcessAlive(current.takenOverBy) ? current.takenOverBy : undefined
+  return isProcessAlive(current.takenOverBy)
+    ? current.takenOverBy
+    : undefined
 }
 
 function readLockFile(lockPath: string): LockInfo | undefined {
@@ -135,6 +141,8 @@ const MAX_LOCK_STRING_LENGTH = 1024
 // eslint-disable-next-line no-control-regex
 const CONTROL_CHARS_RE = /[\u0000-\u001F\u007F-\u009F]/g
 const LOCK_HOSTNAME_RE = /^[\w.:[\]-]{1,253}$/
+// Plain path segments only: the base URL ends up on a browser launcher's command line.
+const LOCK_URL_PATH_RE = /^\/(?:[\w.~@+-]+\/)*[\w.~@+-]*$/
 
 function lockPid(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= 2 ** 31 - 1
@@ -155,11 +163,20 @@ function lockURL(value: unknown): string | undefined {
   }
   try {
     const url = new URL(text)
-    return url.protocol === 'http:' || url.protocol === 'https:' ? text : undefined
+    return url.protocol === 'http:' || url.protocol === 'https:'
+      ? text
+      : undefined
   }
   catch {
     return undefined
   }
+}
+
+function lockURLPath(value: unknown): string | undefined {
+  const text = lockText(value)
+  return text && LOCK_URL_PATH_RE.test(text)
+    ? text
+    : undefined
 }
 
 /**
@@ -189,6 +206,7 @@ export function parseLockInfo(raw: unknown): LockInfo | undefined {
 
   const port = input.port
   const hostname = lockText(input.hostname)
+  const baseURL = lockURLPath(input.baseURL)
   const parentPid = lockPid(input.parentPid)
   const serverPid = lockPid(input.serverPid)
   const takenOverBy = lockPid(input.takenOverBy)
@@ -199,12 +217,29 @@ export function parseLockInfo(raw: unknown): LockInfo | undefined {
     command,
     cwd: lockText(input.cwd) ?? '',
     interactive: input.interactive === true,
-    ...typeof port === 'number' && Number.isInteger(port) && port > 0 && port <= 65_535 ? { port } : {},
-    ...hostname && LOCK_HOSTNAME_RE.test(hostname) ? { hostname } : {},
-    ...lockURL(input.url) ? { url: lockURL(input.url) } : {},
-    ...parentPid ? { parentPid } : {},
-    ...serverPid ? { serverPid } : {},
-    ...takenOverBy ? { takenOverBy } : {},
+    ...typeof port === 'number' && Number.isInteger(port) && port > 0 && port <= 65_535
+      ? { port }
+      : {},
+    ...hostname && LOCK_HOSTNAME_RE.test(hostname)
+      ? { hostname }
+      : {},
+    ...lockURL(input.url)
+      ? {
+          url: lockURL(input.url),
+        }
+      : {},
+    ...baseURL
+      ? { baseURL }
+      : {},
+    ...parentPid
+      ? { parentPid }
+      : {},
+    ...serverPid
+      ? { serverPid }
+      : {},
+    ...takenOverBy
+      ? { takenOverBy }
+      : {},
   }
 }
 
@@ -301,7 +336,9 @@ function acquireLockAt(
   options: AcquireLockOptions = {},
 ): LockResult {
   if (!isLockEnabled()) {
-    return { release: () => {} }
+    return {
+      release: () => {},
+    }
   }
 
   const fullInfo: LockInfo = {
@@ -320,7 +357,9 @@ function acquireLockAt(
 
   const blockingLock = (): LockInfo | undefined => {
     const existing = readLockFile(lockPath)
-    return existing && existing.pid !== options.takeoverFrom && isLockActive(existing) ? existing : undefined
+    return existing && existing.pid !== options.takeoverFrom && isLockActive(existing)
+      ? existing
+      : undefined
   }
 
   // Try exclusive-create up to twice: the first attempt may race with a stale
@@ -328,7 +367,9 @@ function acquireLockAt(
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       writeFileSync(lockPath, JSON.stringify(fullInfo, null, 2), { flag: 'wx' })
-      return { release: makeRelease(lockPath) }
+      return {
+        release: makeRelease(lockPath),
+      }
     }
     catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') {
@@ -344,7 +385,11 @@ function acquireLockAt(
   }
 
   const existing = blockingLock()
-  return existing ? { existing } : { release: () => {} }
+  return existing
+    ? { existing }
+    : {
+        release: () => {},
+      }
 }
 
 /**
@@ -402,8 +447,12 @@ function makeRelease(lockPath: string): () => void {
  */
 export function formatLockError(info: LockInfo, options: { outputDir?: string } = {}): string {
   const isWindows = process.platform === 'win32'
-  const killCmd = isWindows ? `taskkill /PID ${info.pid} /F` : `kill ${info.pid}`
-  const label = info.command === 'dev' ? 'dev server' : 'build'
+  const killCmd = isWindows
+    ? `taskkill /PID ${info.pid} /F`
+    : `kill ${info.pid}`
+  const label = info.command === 'dev'
+    ? 'dev server'
+    : 'build'
 
   const lines = [
     '',

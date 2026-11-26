@@ -81,7 +81,7 @@ npx nuxt dev [ROOTDIR] [--cwd=<directory>] [--logLevel=<silent|info|verbose>] [-
 | `y`         | 将服务器 URL 复制到剪贴板          |
 | `i`         | 显示版本、URL、二维码和会话信息 |
 | `l`         | 浏览日志历史                        |
-| `e`         | 打开最后一个错误处的日志               |
+| `e`         | 完整显示最近一次错误                  |
 | `n`         | 浏览已提供服务的请求                        |
 | `p`         | 浏览页面和服务器路由                |
 | `c`         | 清除日志、请求和控制台          |
@@ -89,6 +89,14 @@ npx nuxt dev [ROOTDIR] [--cwd=<directory>] [--logLevel=<silent|info|verbose>] [-
 | `q`         | 退出                                          |
 
 在视图中，`y` 会复制选中的行，`shift-y` 会复制筛选条件和搜索结果留下的所有行；如果内容过多而无法粘贴，则保留最新的行。在信息视图中，`shift-y` 会改为复制 [`nuxt info`](/docs/api/commands/info) 表格。
+
+### 浏览日志
+
+在日志视图（`l`）中，每条日志占一行，行尾会显示其余行数。选中的日志会在原位展开，并按终端宽度换行，因此使用 `↑`/`↓` 浏览列表时即可逐条阅读完整日志。按 `enter` 可单独查看选中的日志：`↑`/`↓` 用于滚动，`←`/`→` 用于切换上一条或下一条日志，按 `esc` 返回列表。
+
+仅当某条日志的时间与上一行不同时才会显示时间戳。按 `shift-t` 可隐藏时间戳，为日志腾出完整行宽。
+
+![nuxt dev 日志浏览界面](/capture/output/nuxt-dev-logs.svg)
 
 ### 追踪请求
 
@@ -112,11 +120,15 @@ npx nuxt dev [ROOTDIR] [--cwd=<directory>] [--logLevel=<silent|info|verbose>] [-
 
 dev 服务器会将自身记录在[构建目录](/docs/directory-structure/nuxt)中的 `nuxt.lock` 内，因此同一项目的第二个 `nuxt dev` 会报告已经运行的服务器，而不是与其争抢端口。传入 `--takeover` 可停止它并接管其位置，或设置 `NUXT_IGNORE_LOCK=1` 以无论如何运行第二个服务器（不受支持）。
 
+传入 `--open` 时，提示还会提供在不停止服务器的情况下于浏览器中打开它的选项；如果服务器是在终端中启动的，这也是默认行为。`--open.url` 会根据正在运行的服务器 URL 解析。
+
 [`nuxt curl`](/docs/api/commands/curl) 和 [`nuxt task`](/docs/api/commands/task) 也是通过同一个锁文件查找要与之通信的服务器。
 
 ## HTTPS
 
 `--https` 会通过 TLS 提供服务：安装了 `mkcert` 时使用它生成本地信任的证书，否则生成自签名证书。`--https.cert` 和 `--https.key` 使用已有证书，`--https.pfx` 与 `--https.passphrase` 则使用 PKCS#12 密钥库。
+
+请求通过 HTTP/2 提供服务，因此浏览器可在单个连接上并行加载页面模块。WebSocket 和不支持 HTTP/2 的客户端仍可使用 HTTP/1.1。使用低于 2.13.3 版本 Nitro 的项目只通过 HTTP/1.1 提供服务。
 
 ::note
 Node 不会读取系统信任存储，因此从 Node 向使用生成证书的服务器发出的请求不会信任该证书。请将 `NODE_EXTRA_CA_CERTS` 设置为签发该证书的证书颁发机构。

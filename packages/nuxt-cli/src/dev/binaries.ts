@@ -10,7 +10,7 @@ import { basename, dirname, join } from 'pathe'
 import { readUser, updateUser } from 'rc9'
 
 import { getCacheDir } from '../utils/cache'
-import { restoreRawMode, withDirectStdout } from '../utils/console'
+import { askQuestion, restoreRawMode, withDirectStdout } from '../utils/console'
 import { debug, logger } from '../utils/logger'
 import { logNetworkError } from '../utils/network'
 import { findInPath } from '../utils/path-env'
@@ -47,7 +47,9 @@ async function locateTool(name: string, options: { url?: string, archive?: boole
   }
   const cacheName = options.cacheName || name
   const cacheDir = getCacheDir('bin')
-  const destination = join(cacheDir, process.platform === 'win32' ? `${cacheName}.exe` : cacheName)
+  const destination = join(cacheDir, process.platform === 'win32'
+    ? `${cacheName}.exe`
+    : cacheName)
   if (dirname(destination) !== cacheDir) {
     debug(`Refusing to cache \`${name}\` outside ${cacheDir}.`)
     return undefined
@@ -89,14 +91,17 @@ async function confirmToolInstall(options: ConsentOptions): Promise<boolean> {
   }
 
   logger.message(options.notice.join('\n'))
-  const agreed = await confirm({ message: options.message })
-  restoreRawMode()
+  const agreed = await askQuestion(() => confirm({ message: options.message }))
   if (isCancel(agreed) || agreed !== true) {
     return false
   }
 
   try {
-    updateUser({ tools: { [options.key]: { termsAccepted: true } } }, '.nuxtrc')
+    updateUser({
+      tools: {
+        [options.key]: { termsAccepted: true },
+      },
+    }, '.nuxtrc')
   }
   catch (error) {
     debug('Failed to update user .nuxtrc:', error)
@@ -181,7 +186,9 @@ async function readWithProgress(response: Response, label: string): Promise<Buff
     return Buffer.from(await response.arrayBuffer())
   }
 
-  const indicator = total ? progress({ style: 'heavy', max: total }) : spinner()
+  const indicator = total
+    ? progress({ style: 'heavy', max: total })
+    : spinner()
   indicator.start(message)
 
   const chunks: Buffer[] = []

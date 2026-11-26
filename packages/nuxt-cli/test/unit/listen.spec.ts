@@ -1,11 +1,18 @@
-import type { BoundServer, Listener } from '../../src/dev/listen'
+import type { IncomingHttpHeaders, RequestListener } from 'node:http'
+import type { ClientHttp2Session, ClientHttp2Stream } from 'node:http2'
+import type { BoundServer, Listener, ListenOptions } from '../../src/dev/listen'
 
+import { connect as connectHttp2 } from 'node:http2'
+import { Agent as HttpsAgent, request as requestHttps } from 'node:https'
 import { connect } from 'node:net'
 import { networkInterfaces } from 'node:os'
+import { connect as connectTls } from 'node:tls'
+import { fileURLToPath } from 'node:url'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { copyURL, formatDisplayURL, getNetworkAddresses, isReusePortSupported, listen, matchesBoundTarget, openBrowser, parsePort, resolveOpenCommand, validateHostname, writeClipboard } from '../../src/dev/listen'
+import { canOpenBrowser, copyURL, formatDisplayURL, getNetworkAddresses, isReusePortSupported, listen, matchesBoundTarget, openBrowser, parsePort, resolveOpenCommand, validateHostname } from '../../src/dev/listen'
+import { logger } from '../../src/utils/logger'
 
 const writeText = vi.hoisted(() => vi.fn())
 const isolatedEnvironment = vi.hoisted(() => ({ current: undefined as string | undefined }))
@@ -42,7 +49,16 @@ const realEnv = { ...process.env }
 /** Pretend to run on `platform`, with only the display variables in `env` set. */
 function stubEnvironment(platform: NodeJS.Platform, env: NodeJS.ProcessEnv = {}) {
   Object.defineProperty(process, 'platform', { value: platform, configurable: true })
-  process.env = { ...realEnv, BROWSER: undefined, DISPLAY: undefined, WAYLAND_DISPLAY: undefined, WSL_DISTRO_NAME: undefined, ...env }
+  process.env = {
+    ...realEnv,
+    BROWSER: undefined,
+    DISPLAY: undefined,
+    WAYLAND_DISPLAY: undefined,
+    WSL_DISTRO_NAME: undefined,
+    TERM: undefined,
+    TERM_PROGRAM: undefined,
+    ...env,
+  }
 }
 
 function restoreEnvironment() {
@@ -53,7 +69,9 @@ function restoreEnvironment() {
 describe('getNetworkAddresses', () => {
   it('should return external IPv4 addresses', () => {
     mocked.mockReturnValue({
-      lo0: [{ address: '127.0.0.1', family: 'IPv4', internal: true } as any],
+      lo0: [
+        { address: '127.0.0.1', family: 'IPv4', internal: true } as any,
+      ],
       en0: [
         { address: '192.168.1.20', family: 'IPv4', internal: false } as any,
         { address: 'fe80::1', family: 'IPv6', internal: false } as any,
@@ -65,8 +83,12 @@ describe('getNetworkAddresses', () => {
 
   it('should ignore IPv4 link-local addresses', () => {
     mocked.mockReturnValue({
-      bridge0: [{ address: '169.254.13.37', family: 'IPv4', internal: false } as any],
-      en0: [{ address: '192.168.1.20', family: 'IPv4', internal: false } as any],
+      bridge0: [
+        { address: '169.254.13.37', family: 'IPv4', internal: false } as any,
+      ],
+      en0: [
+        { address: '192.168.1.20', family: 'IPv4', internal: false } as any,
+      ],
     })
 
     expect(getNetworkAddresses()).toEqual(['192.168.1.20'])
@@ -74,8 +96,22 @@ describe('getNetworkAddresses', () => {
 
   it('should ignore subnet base addresses that no host answers on', () => {
     mocked.mockReturnValue({
-      bridge100: [{ address: '192.168.215.0', cidr: '192.168.215.0/24', family: 'IPv4', internal: false } as any],
-      en0: [{ address: '192.168.1.20', cidr: '192.168.1.20/24', family: 'IPv4', internal: false } as any],
+      bridge100: [
+        {
+          address: '192.168.215.0',
+          cidr: '192.168.215.0/24',
+          family: 'IPv4',
+          internal: false,
+        } as any,
+      ],
+      en0: [
+        {
+          address: '192.168.1.20',
+          cidr: '192.168.1.20/24',
+          family: 'IPv4',
+          internal: false,
+        } as any,
+      ],
     })
 
     expect(getNetworkAddresses()).toEqual(['192.168.1.20'])
@@ -83,7 +119,14 @@ describe('getNetworkAddresses', () => {
 
   it('should keep a base address in a point-to-point subnet', () => {
     mocked.mockReturnValue({
-      ptp0: [{ address: '10.0.0.0', cidr: '10.0.0.0/31', family: 'IPv4', internal: false } as any],
+      ptp0: [
+        {
+          address: '10.0.0.0',
+          cidr: '10.0.0.0/31',
+          family: 'IPv4',
+          internal: false,
+        } as any,
+      ],
     })
 
     expect(getNetworkAddresses()).toEqual(['10.0.0.0'])
@@ -148,7 +191,13 @@ describe('parsePort', () => {
     expect(parsePort(value)).toBe(expected)
   })
 
-  it.each(['nope', '-1', '1.5', '65536', 'Infinity'])('should reject %s', (value) => {
+  it.each([
+    'nope',
+    '-1',
+    '1.5',
+    '65536',
+    'Infinity',
+  ])('should reject %s', (value) => {
     expect(() => parsePort(value)).toThrow(`Invalid port \`${value}\``)
   })
 })
@@ -171,7 +220,10 @@ describe('matchesBoundTarget', () => {
   })
 
   it('should accept a port that fell back because the requested one was in use', () => {
-    expect(matchesBoundTarget(bound({ address: { address: '127.0.0.1', port: 3001, family: 'IPv4' }, requestedPort: 3000 }), { port: 3000 })).toBe(true)
+    expect(matchesBoundTarget(bound({
+      address: { address: '127.0.0.1', port: 3001, family: 'IPv4' },
+      requestedPort: 3000,
+    }), { port: 3000 })).toBe(true)
   })
 
   it('should reject a different port, host or protocol', () => {
@@ -190,13 +242,25 @@ describe('resolveOpenCommand', () => {
   const url = 'http://localhost:3000/'
 
   it('should use the platform default when `BROWSER` is unset', () => {
-    expect(resolveOpenCommand(url, 'darwin', {})).toEqual(['open', [url]])
-    expect(resolveOpenCommand(url, 'linux', {})).toEqual(['xdg-open', [url]])
-    expect(resolveOpenCommand(url, 'win32', {})).toEqual(['cmd.exe', ['/c', 'start', '""', url]])
+    expect(resolveOpenCommand(url, 'darwin', {})).toEqual([
+      'open',
+      [url],
+    ])
+    expect(resolveOpenCommand(url, 'linux', {})).toEqual([
+      'xdg-open',
+      [url],
+    ])
+    expect(resolveOpenCommand(url, 'win32', {})).toEqual([
+      'cmd.exe',
+      ['/c', 'start', '""', url],
+    ])
   })
 
   it('should open via `cmd.exe` on WSL', () => {
-    expect(resolveOpenCommand(url, 'linux', { WSL_DISTRO_NAME: 'Ubuntu' })).toEqual(['cmd.exe', ['/c', 'start', '""', url]])
+    expect(resolveOpenCommand(url, 'linux', { WSL_DISTRO_NAME: 'Ubuntu' })).toEqual([
+      'cmd.exe',
+      ['/c', 'start', '""', url],
+    ])
   })
 
   it('should not open anything for `BROWSER=none`', () => {
@@ -204,20 +268,50 @@ describe('resolveOpenCommand', () => {
   })
 
   it('should respect `BROWSER` and `BROWSER_ARGS`', () => {
-    expect(resolveOpenCommand(url, 'linux', { BROWSER: 'firefox' })).toEqual(['firefox', [url]])
-    expect(resolveOpenCommand(url, 'linux', { BROWSER: 'firefox', BROWSER_ARGS: '--private-window' })).toEqual(['firefox', ['--private-window', url]])
+    expect(resolveOpenCommand(url, 'linux', { BROWSER: 'firefox' })).toEqual([
+      'firefox',
+      [url],
+    ])
+    expect(resolveOpenCommand(url, 'linux', { BROWSER: 'firefox', BROWSER_ARGS: '--private-window' })).toEqual([
+      'firefox',
+      ['--private-window', url],
+    ])
   })
 
   it('should launch a named application with `open -a` on macOS', () => {
-    expect(resolveOpenCommand(url, 'darwin', { BROWSER: 'Firefox' })).toEqual(['open', ['-a', 'Firefox', url]])
-    expect(resolveOpenCommand(url, 'darwin', { BROWSER: 'Firefox', BROWSER_ARGS: '--private-window' })).toEqual(['open', ['-a', 'Firefox', url, '--args', '--private-window']])
-    expect(resolveOpenCommand(url, 'darwin', { BROWSER: '/usr/local/bin/firefox' })).toEqual(['/usr/local/bin/firefox', [url]])
+    expect(resolveOpenCommand(url, 'darwin', { BROWSER: 'Firefox' })).toEqual([
+      'open',
+      ['-a', 'Firefox', url],
+    ])
+    expect(resolveOpenCommand(url, 'darwin', { BROWSER: 'Firefox', BROWSER_ARGS: '--private-window' })).toEqual([
+      'open',
+      [
+        '-a',
+        'Firefox',
+        url,
+        '--args',
+        '--private-window',
+      ],
+    ])
+    expect(resolveOpenCommand(url, 'darwin', { BROWSER: '/usr/local/bin/firefox' })).toEqual([
+      '/usr/local/bin/firefox',
+      [url],
+    ])
   })
 
   it('should treat a `BROWSER` naming the platform launcher as the default', () => {
-    expect(resolveOpenCommand(url, 'darwin', { BROWSER: 'open' })).toEqual(['open', [url]])
-    expect(resolveOpenCommand(url, 'linux', { BROWSER: 'xdg-open' })).toEqual(['xdg-open', [url]])
-    expect(resolveOpenCommand(url, 'win32', { BROWSER: 'start' })).toEqual(['cmd.exe', ['/c', 'start', '""', url]])
+    expect(resolveOpenCommand(url, 'darwin', { BROWSER: 'open' })).toEqual([
+      'open',
+      [url],
+    ])
+    expect(resolveOpenCommand(url, 'linux', { BROWSER: 'xdg-open' })).toEqual([
+      'xdg-open',
+      [url],
+    ])
+    expect(resolveOpenCommand(url, 'win32', { BROWSER: 'start' })).toEqual([
+      'cmd.exe',
+      ['/c', 'start', '""', url],
+    ])
   })
 })
 
@@ -271,10 +365,41 @@ describe('listen', () => {
       socket.on('error', reject)
     })
 
-    const responses = await Promise.all([request('127.0.0.1'), request('::1')])
+    const responses = await Promise.all([
+      request('127.0.0.1'),
+      request('::1'),
+    ])
 
     expect(responses.every(response => response.endsWith('\r\n\r\nok'))).toBe(true)
     expect(listener.url).toBe(`http://localhost:${listener.address.port}/`)
+  })
+
+  describe('network warning', () => {
+    const NETWORK_WARNING = 'The dev server is reachable from the network without authentication'
+
+    async function warnsFor(hostname: string) {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      try {
+        await start({ port: 0, hostname })
+        return warn.mock.calls.some(([message]) => String(message).includes(NETWORK_WARNING))
+      }
+      finally {
+        warn.mockRestore()
+      }
+    }
+
+    it('should warn when bound to all interfaces', async () => {
+      expect(await warnsFor('0.0.0.0')).toBe(true)
+    })
+
+    it('should not warn when bound to loopback', async () => {
+      expect(await warnsFor('127.0.0.1')).toBe(false)
+    })
+
+    // Only Linux binds `127.0.0.0/8` addresses beyond `127.0.0.1` without configuration.
+    it.runIf(process.platform === 'linux')('should not warn when bound to another loopback address', async () => {
+      expect(await warnsFor('127.0.0.2')).toBe(false)
+    })
   })
 
   it('should reject an invalid port before binding', async () => {
@@ -359,7 +484,13 @@ describe('listener.close', () => {
       }),
     }))
 
-    const listener = await listen((_req, res) => res.end('ok'), { port: 0, hostname: '127.0.0.1', baseURL: '/dashboard/', showURL: false, tunnel: true })
+    const listener = await listen((_req, res) => res.end('ok'), {
+      port: 0,
+      hostname: '127.0.0.1',
+      baseURL: '/dashboard/',
+      showURL: false,
+      tunnel: true,
+    })
     expect(listener.publicURL).toBe('https://example.test/dashboard/')
     expect(listener.getURLs()).toContainEqual({ url: 'https://example.test/dashboard/', type: 'tunnel' })
 
@@ -385,7 +516,12 @@ describe('listener.close', () => {
     Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true })
 
     try {
-      await expect(listen((_req, res) => res.end('ok'), { port: 0, hostname: '127.0.0.1', tunnel: true, qr: true })).rejects.toThrow('qr unavailable')
+      await expect(listen((_req, res) => res.end('ok'), {
+        port: 0,
+        hostname: '127.0.0.1',
+        tunnel: true,
+        qr: true,
+      })).rejects.toThrow('qr unavailable')
 
       expect(closeTunnel).toHaveBeenCalledTimes(1)
     }
@@ -407,10 +543,21 @@ describe('listener.close', () => {
     const port = probe.address.port
     await probe.close()
 
-    await expect(listen((_req, res) => res.end('ok'), { port, hostname: '127.0.0.1', showURL: false, strictPort: true, tunnel: true })).rejects.toThrow('tunnel unavailable')
+    await expect(listen((_req, res) => res.end('ok'), {
+      port,
+      hostname: '127.0.0.1',
+      showURL: false,
+      strictPort: true,
+      tunnel: true,
+    })).rejects.toThrow('tunnel unavailable')
     vi.doUnmock('../../src/dev/tunnel')
 
-    const listener = await listen((_req, res) => res.end('ok'), { port, hostname: '127.0.0.1', showURL: false, strictPort: true })
+    const listener = await listen((_req, res) => res.end('ok'), {
+      port,
+      hostname: '127.0.0.1',
+      showURL: false,
+      strictPort: true,
+    })
     expect(listener.address.port).toBe(port)
     await listener.close()
   })
@@ -443,24 +590,195 @@ describe('listener.close', () => {
   })
 })
 
-describe('writeClipboard', () => {
-  afterEach(() => {
-    restoreEnvironment()
-    vi.clearAllMocks()
+describe('listen over https', () => {
+  const certs = fileURLToPath(new URL('../../../../playground/certs/', import.meta.url))
+  const https = { cert: `${certs}cert.dummy`, key: `${certs}key.dummy` }
+
+  const listeners: Listener[] = []
+  const sessions: ClientHttp2Session[] = []
+
+  afterEach(async () => {
+    for (const session of sessions.splice(0)) {
+      session.destroy()
+    }
+    await Promise.all(listeners.splice(0).filter(listener => listener.server.listening).map(listener => listener.close()))
   })
 
-  it('should not reach for a clipboard tool without a display server on linux', async () => {
-    stubEnvironment('linux')
+  async function start(handler: RequestListener, options: ListenOptions = {}) {
+    const listener = await listen(handler, {
+      port: 0,
+      hostname: '127.0.0.1',
+      showURL: false,
+      https,
+      ...options,
+    })
+    listeners.push(listener)
+    return listener
+  }
 
-    await expect(writeClipboard('text')).resolves.toBe(false)
-    expect(writeText).not.toHaveBeenCalled()
+  function openSession(listener: Listener): Promise<ClientHttp2Session> {
+    return new Promise((resolve, reject) => {
+      const session = connectHttp2(listener.url, { rejectUnauthorized: false })
+      sessions.push(session)
+      session.once('connect', () => resolve(session))
+      session.once('error', reject)
+    })
+  }
+
+  function readStream(stream: ClientHttp2Stream): Promise<string> {
+    return new Promise((resolve, reject) => {
+      let body = ''
+      stream.setEncoding('utf8')
+      stream.on('data', chunk => body += chunk)
+      stream.once('end', () => resolve(body))
+      stream.once('error', reject)
+    })
+  }
+
+  function requestHttp1(listener: Listener, agent: HttpsAgent | false = false): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const req = requestHttps(listener.url, { rejectUnauthorized: false, agent }, (res) => {
+        let body = ''
+        res.setEncoding('utf8')
+        res.on('data', chunk => body += chunk)
+        res.once('end', () => resolve(body))
+      })
+      req.once('error', reject)
+      req.end()
+    })
+  }
+
+  function negotiateProtocol(listener: Listener): Promise<string | false | null> {
+    return new Promise((resolve, reject) => {
+      const socket = connectTls({
+        host: '127.0.0.1',
+        port: listener.address.port,
+        rejectUnauthorized: false,
+        ALPNProtocols: ['h2', 'http/1.1'],
+      }, () => {
+        resolve(socket.alpnProtocol)
+        socket.destroy()
+      })
+      socket.once('error', reject)
+    })
+  }
+
+  it('should serve HTTP/2 and HTTP/1.1 requests', async () => {
+    const listener = await start((req, res) => res.end(req.httpVersion))
+    const session = await openSession(listener)
+
+    await expect(readStream(session.request({ ':path': '/' }))).resolves.toBe('2.0')
+    await expect(requestHttp1(listener)).resolves.toBe('1.1')
   })
 
-  it('should resolve false rather than throw when the write fails', async () => {
-    stubEnvironment('darwin')
-    writeText.mockRejectedValueOnce(new Error('no clipboard tool found'))
+  it('should provide `:authority` as `host` without the other pseudo-headers', async () => {
+    const listener = await start((req, res) => res.end(JSON.stringify({ method: req.method, url: req.url, headers: req.headers })))
+    const session = await openSession(listener)
+    const authority = `127.0.0.1:${listener.address.port}`
 
-    await expect(writeClipboard('text')).resolves.toBe(false)
+    const request = async (headers: IncomingHttpHeaders) => JSON.parse(await readStream(session.request({ ':method': 'POST', ':path': '/path?query', ...headers }).end()))
+
+    await expect(request({ 'x-test': 'value' })).resolves.toEqual({
+      method: 'POST',
+      url: '/path?query',
+      headers: { 'host': authority, 'x-test': 'value' },
+    })
+    await expect(request({ ':authority': authority, 'host': 'other.test' })).resolves.toMatchObject({
+      headers: { host: authority },
+    })
+  })
+
+  it('should serve HTTP/1.1 only when `http2` is disabled', async () => {
+    const listener = await start((req, res) => res.end(req.httpVersion), { http2: false })
+
+    await expect(negotiateProtocol(listener)).resolves.not.toBe('h2')
+    await expect(requestHttp1(listener)).resolves.toBe('1.1')
+    await expect(negotiateProtocol(await start((_req, res) => res.end('ok')))).resolves.toBe('h2')
+  })
+
+  it('should let an in-flight HTTP/2 request finish', async () => {
+    let respond: (() => void) | undefined
+    const listener = await start((_req, res) => {
+      respond = () => res.end('done')
+    })
+    const session = await openSession(listener)
+
+    const body = readStream(session.request({ ':path': '/' }))
+    await vi.waitFor(() => expect(respond).toBeDefined())
+
+    const closed = listener.close()
+    respond!()
+
+    await expect(body).resolves.toBe('done')
+    await closed
+  })
+
+  it('should pass HTTP/1.1 upgrade requests to `upgrade` listeners', async () => {
+    const listener = await start((_req, res) => res.end('ok'))
+    listener.server.on('upgrade', (_req, socket) => {
+      socket.end('HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n')
+    })
+
+    const status = new Promise((resolve, reject) => {
+      const req = requestHttps(listener.url, {
+        rejectUnauthorized: false,
+        agent: false,
+        headers: { connection: 'Upgrade', upgrade: 'websocket' },
+      })
+      req.once('upgrade', (res, socket) => {
+        socket.destroy()
+        resolve(res.statusCode)
+      })
+      req.once('error', reject)
+      req.end()
+    })
+
+    await expect(status).resolves.toBe(101)
+  })
+
+  it('should not wait for idle keep-alive connections', async () => {
+    const listener = await start((_req, res) => res.end('ok'))
+    const agent = new HttpsAgent({ keepAlive: true })
+
+    try {
+      await requestHttp1(listener, agent)
+
+      const closing = Date.now()
+      await listener.close()
+
+      expect(Date.now() - closing).toBeLessThan(500)
+    }
+    finally {
+      agent.destroy()
+    }
+  })
+
+  it('should not wait for idle HTTP/2 sessions', async () => {
+    const listener = await start((_req, res) => res.end('ok'))
+    const session = await openSession(listener)
+    await readStream(session.request({ ':path': '/' }))
+
+    const closing = Date.now()
+    await listener.close()
+
+    expect(Date.now() - closing).toBeLessThan(500)
+  })
+
+  it('should end HTTP/2 streams that outlive the drain timeout', async () => {
+    const listener = await start((_req, res) => {
+      res.write('open')
+    })
+    const session = await openSession(listener)
+    session.on('error', () => {})
+    const stream = session.request({ ':path': '/' })
+    stream.on('error', () => {})
+    const ended = new Promise(resolve => stream.once('close', resolve))
+    await new Promise(resolve => stream.once('data', resolve))
+
+    await listener.close()
+    await ended
+
+    expect(stream.destroyed).toBe(true)
   })
 })
 
@@ -492,6 +810,23 @@ describe('copyURL', () => {
     await copyURL('http://localhost:3000/')
 
     expect(writeText).toHaveBeenCalledWith('http://localhost:3000/')
+  })
+})
+
+describe('canOpenBrowser', () => {
+  afterEach(restoreEnvironment)
+
+  it('should be false only when `openBrowser` has nothing to launch', () => {
+    stubEnvironment('linux')
+    expect(canOpenBrowser()).toBe(false)
+    stubEnvironment('linux', { DISPLAY: ':0' })
+    expect(canOpenBrowser()).toBe(true)
+    stubEnvironment('linux', { BROWSER: '/home/user/.vscode-server/bin/helpers/browser.sh' })
+    expect(canOpenBrowser()).toBe(true)
+    stubEnvironment('darwin', { BROWSER: 'none' })
+    expect(canOpenBrowser()).toBe(false)
+    stubEnvironment('darwin')
+    expect(canOpenBrowser()).toBe(true)
   })
 })
 

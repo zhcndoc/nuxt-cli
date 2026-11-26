@@ -34,7 +34,9 @@ function baseLock(overrides: Record<string, unknown> = {}) {
 }
 
 async function writeLock(contents: unknown): Promise<string> {
-  await writeFile(join(tempDir, 'nuxt.lock'), typeof contents === 'string' ? contents : JSON.stringify(contents))
+  await writeFile(join(tempDir, 'nuxt.lock'), typeof contents === 'string'
+    ? contents
+    : JSON.stringify(contents))
   return tempDir
 }
 
@@ -52,7 +54,9 @@ describe('parseLockInfo', () => {
 
   it('should reject anything that is not an object', () => {
     expect(parseLockInfo(null)).toBeUndefined()
-    expect(parseLockInfo([baseLock()])).toBeUndefined()
+    expect(parseLockInfo([
+      baseLock(),
+    ])).toBeUndefined()
     expect(parseLockInfo('dev')).toBeUndefined()
   })
 
@@ -78,6 +82,15 @@ describe('parseLockInfo', () => {
     expect(parseLockInfo(baseLock({ url: 'http://localhost:3000' }))?.url).toBe('http://localhost:3000')
   })
 
+  it('should drop a base url that is not a path', () => {
+    expect(parseLockInfo(baseLock({ baseURL: 'https://attacker.example/' }))?.baseURL).toBeUndefined()
+    expect(parseLockInfo(baseLock({ baseURL: '//attacker.example/' }))?.baseURL).toBeUndefined()
+    expect(parseLockInfo(baseLock({ baseURL: '/x|calc&y/' }))?.baseURL).toBeUndefined()
+    expect(parseLockInfo(baseLock({ baseURL: '/%PATH%/' }))?.baseURL).toBeUndefined()
+    expect(parseLockInfo(baseLock({ baseURL: '/admin/' }))?.baseURL).toBe('/admin/')
+    expect(parseLockInfo(baseLock({ baseURL: '/docs/v2' }))?.baseURL).toBe('/docs/v2')
+  })
+
   it('should strip control characters from displayed strings', () => {
     const info = parseLockInfo(baseLock({ cwd: '/tmp/\u001B[2Jproject\u0007' }))
     expect(info?.cwd).toBe('/tmp/[2Jproject')
@@ -90,7 +103,9 @@ describe('parseLockInfo', () => {
   })
 
   it('should cap the length of strings it keeps', () => {
-    expect(parseLockInfo(baseLock({ cwd: 'a'.repeat(5000) }))?.cwd).toHaveLength(1024)
+    expect(parseLockInfo(baseLock({
+      cwd: 'a'.repeat(5000),
+    }))?.cwd).toHaveLength(1024)
   })
 })
 
@@ -130,7 +145,10 @@ describe('reading an untrusted lock', () => {
 describe('findNitroDevWorker', () => {
   it('should ignore a worker address on a remote host', async () => {
     await writeFile(join(tempDir, 'nitro.json'), JSON.stringify({
-      dev: { pid: process.pid, workerAddress: { host: 'evil.example.com', port: 80 } },
+      dev: {
+        pid: process.pid,
+        workerAddress: { host: 'evil.example.com', port: 80 },
+      },
     }))
 
     await expect(findNitroDevWorker(tempDir, tempDir)).resolves.toBeUndefined()
@@ -138,7 +156,10 @@ describe('findNitroDevWorker', () => {
 
   it('should accept a loopback worker address', async () => {
     await writeFile(join(tempDir, 'nitro.json'), JSON.stringify({
-      dev: { pid: process.pid, workerAddress: { host: '127.0.0.1', port: 3000 } },
+      dev: {
+        pid: process.pid,
+        workerAddress: { host: '127.0.0.1', port: 3000 },
+      },
     }))
 
     await expect(findNitroDevWorker(tempDir, tempDir)).resolves.toMatchObject({ url: 'http://127.0.0.1:3000' })

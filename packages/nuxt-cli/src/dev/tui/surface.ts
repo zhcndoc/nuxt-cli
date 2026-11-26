@@ -57,6 +57,9 @@ export class PanelSurface {
   #externalOutput: ExternalOutput = 'passthrough'
   #sink?: (chunk: string) => void
   #pending: PendingOutput[] = []
+  /** Output kept off the screen during the current turn of the event loop. */
+  #unseen = ''
+  #unseenTimer?: NodeJS.Immediate
   #rowsWritten = 0
   #rows = process.stdout.rows || 24
   #columns = process.stdout.columns || 80
@@ -157,6 +160,13 @@ export class PanelSurface {
   /** Receive output instead of the terminal while capturing. */
   onExternalOutput(sink: (chunk: string) => void): void {
     this.#sink = sink
+  }
+
+  /** Take the output diverted during the current turn of the event loop. A second call returns nothing. */
+  takeUnseenOutput(): string {
+    const unseen = this.#unseen
+    this.#unseen = ''
+    return unseen
   }
 
   /**
@@ -269,7 +279,9 @@ export class PanelSurface {
    * ends a line, so the panel cannot end up sharing one with it.
    */
   writeAbove(text: string): void {
-    const line = text.endsWith('\n') ? text : `${text}\n`
+    const line = text.endsWith('\n')
+      ? text
+      : `${text}\n`
     if (this.#closed) {
       this.#raw(line)
       return
@@ -290,6 +302,8 @@ export class PanelSurface {
     this.#sink = undefined
     this.#reseat = false
     clearTimeout(this.#recoverTimer)
+    clearImmediate(this.#unseenTimer)
+    this.#unseen = ''
     this.#erase()
     // Whatever a view was holding is the session's last word on what happened,
     // and there is no longer anywhere to fold it away to.
@@ -327,7 +341,9 @@ export class PanelSurface {
         if (text !== undefined) {
           this.#divert(text)
         }
-        const done = typeof encoding === 'function' ? encoding : callback
+        const done = typeof encoding === 'function'
+          ? encoding
+          : callback
         if (typeof done === 'function') {
           done()
         }
@@ -350,6 +366,14 @@ export class PanelSurface {
 
   /** Output the panel intercepted, held for a view or handed to the sink. */
   #divert(text: string): void {
+    this.#unseen += text
+    if (!this.#unseenTimer) {
+      this.#unseenTimer = setImmediate(() => {
+        this.#unseenTimer = undefined
+        this.#unseen = ''
+      })
+      this.#unseenTimer.unref?.()
+    }
     if (this.#screen === 'alternate-screen') {
       this.#queue({ text, scrollback: false })
       return
@@ -437,7 +461,9 @@ export class PanelSurface {
     const up = this.#painted - 1
     this.#painted = 0
     this.#atLineStart = true
-    return `\r${up > 0 ? `\u001B[${up}A` : ''}\u001B[J`
+    return `\r${up > 0
+      ? `\u001B[${up}A`
+      : ''}\u001B[J`
   }
 }
 
@@ -445,5 +471,7 @@ function asText(chunk: unknown): string | undefined {
   if (typeof chunk === 'string') {
     return chunk
   }
-  return chunk instanceof Uint8Array ? Buffer.from(chunk).toString() : undefined
+  return chunk instanceof Uint8Array
+    ? Buffer.from(chunk).toString()
+    : undefined
 }

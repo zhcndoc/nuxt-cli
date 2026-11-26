@@ -1,9 +1,12 @@
 import type { PackageJson } from 'pkg-types'
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 
 import { parseYAML } from 'confbox/yaml'
-import { dirname, join, resolve } from 'pathe'
+
+import { findPnpmWorkspaceYaml } from './workspace'
+
+export { findPnpmWorkspaceYaml }
 
 const CATALOG_SPECIFIER_RE = /^catalog:(.*)$/
 
@@ -28,19 +31,6 @@ export function parseCatalogSpecifier(specifier: string | undefined): string | u
     return undefined
   }
   return match[1] || DEFAULT_CATALOG
-}
-
-/** Nearest `pnpm-workspace.yaml` at or above `cwd`. */
-export function findPnpmWorkspaceYaml(cwd: string): string | undefined {
-  for (let dir = resolve(cwd); ; dir = dirname(dir)) {
-    const filePath = join(dir, 'pnpm-workspace.yaml')
-    if (existsSync(filePath)) {
-      return filePath
-    }
-    if (dir === dirname(dir)) {
-      return undefined
-    }
-  }
 }
 
 const configCache = new Map<string, Catalogs | undefined>()
@@ -91,7 +81,9 @@ function parseCatalogConfig(filePath: string): Catalogs | undefined {
     catalogs[DEFAULT_CATALOG] = json.catalog
   }
 
-  return Object.keys(catalogs).length > 0 ? catalogs : undefined
+  return Object.keys(catalogs).length > 0
+    ? catalogs
+    : undefined
 }
 
 /**
@@ -188,17 +180,25 @@ function parseKeyLine(line: string): KeyLine | undefined {
   if (rest !== '' && !rest!.startsWith(' ')) {
     return undefined
   }
-  const key = quote ? quoted! : plain!.trimEnd()
+  const key = quote
+    ? quoted!
+    : plain!.trimEnd()
   return {
     indent: match[1]!.length,
-    key: quote ? unescapeYAMLString(key, quote) : key,
-    raw: quote ? `${quote}${quoted}${quote}` : key,
+    key: quote
+      ? unescapeYAMLString(key, quote)
+      : key,
+    raw: quote
+      ? `${quote}${quoted}${quote}`
+      : key,
     value: rest!.trimStart(),
   }
 }
 
 function unescapeYAMLString(value: string, quote: string): string {
-  return quote === '\'' ? value.replaceAll('\'\'', '\'') : JSON.parse(`"${value}"`)
+  return quote === '\''
+    ? value.replaceAll('\'\'', '\'')
+    : JSON.parse(`"${value}"`)
 }
 
 function isBlankOrComment(line: string): boolean {
@@ -215,7 +215,10 @@ function splitTrailingComment(value: string): [scalar: string, comment: string] 
   if (!match) {
     return [value, '']
   }
-  return [value.slice(0, match.index), match[0]!]
+  return [
+    value.slice(0, match.index),
+    match[0]!,
+  ]
 }
 
 /**
@@ -282,7 +285,9 @@ interface CatalogBlock {
 }
 
 function catalogPath(catalog: string): string[] {
-  return catalog === DEFAULT_CATALOG ? ['catalog'] : ['catalogs', catalog]
+  return catalog === DEFAULT_CATALOG
+    ? ['catalog']
+    : ['catalogs', catalog]
 }
 
 function findBlock(lines: string[], path: string[]): CatalogBlock | undefined | 'failed' {
@@ -383,7 +388,9 @@ function appendLines(lines: string[], toAppend: string[]): UpdateCatalogEntriesR
 const PLAIN_KEY_RE = /^[\w.][\w.\-/]*$/
 
 function quoteYAMLKey(key: string): string {
-  return PLAIN_KEY_RE.test(key) ? key : JSON.stringify(key)
+  return PLAIN_KEY_RE.test(key)
+    ? key
+    : JSON.stringify(key)
 }
 
 function quoteYAMLScalar(value: string): string {
@@ -391,5 +398,7 @@ function quoteYAMLScalar(value: string): string {
     || /^[-?:,[\]{}#&*!|>'"%@`]/.test(value)
     || /:\s|\s#|[\n\t]/.test(value)
     || value.trim() !== value
-  return needsQuotes ? JSON.stringify(value) : value
+  return needsQuotes
+    ? JSON.stringify(value)
+    : value
 }

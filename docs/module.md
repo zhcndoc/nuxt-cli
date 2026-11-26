@@ -1,6 +1,6 @@
 ---
 title: "nuxt module"
-description: "使用命令行在 Nuxt 应用中搜索、添加和移除模块。"
+description: "使用命令行搜索、添加、移除和构建 Nuxt 模块。"
 links:
   - label: 来源
     icon: i-simple-icons-github
@@ -135,3 +135,77 @@ npx nuxt module search pinia
 ```
 
 使用 `--json` 可获取机器可读的 JSON 格式结果。
+
+## `nuxt module build`
+
+<!--module-build-cmd-->
+```bash [Terminal]
+npx nuxt module build [ROOTDIR] [--cwd=<directory>] [--outDir=<directory>] [--sourcemap]
+```
+<!--/module-build-cmd-->
+
+### 参数
+
+<!--module-build-args-->
+| 参数      | 描述                           |
+|-----------|--------------------------------|
+| `ROOTDIR` | Nuxt 模块的根目录（默认值：.） |
+<!--/module-build-args-->
+
+### 选项
+
+<!--module-build-opts-->
+| 选项                   | 默认值 | 描述                                  |
+|------------------------|--------|---------------------------------------|
+| `--cwd=<directory>`    |        | 指定 Nuxt 模块的根目录                |
+| `--outDir=<directory>` |        | 相对于模块根目录的输出目录（默认值：`dist`） |
+| `--sourcemap`          |        | 生成 source map                       |
+<!--/module-build-opts-->
+
+此命令会将所有参数传递给 `@nuxt/module-builder` 中的 `nuxt-module-build build`，以构建用于发布的模块。你的模块中必须安装 `@nuxt/module-builder`。
+
+**示例：**
+
+```bash [Terminal]
+npx nuxt module build
+```
+
+::read-more{to="https://github.com/nuxt/module-builder/blob/main/docs/2.commands.md#build" icon="i-simple-icons-github" target="\_blank"}
+详细了解 `nuxt-module-build build`。
+::
+
+## `nuxt module prepare`
+
+<!--module-prepare-cmd-->
+```bash [Terminal]
+npx nuxt module prepare [ROOTDIR] [--cwd=<directory>]
+```
+<!--/module-prepare-cmd-->
+
+### 参数
+
+<!--module-prepare-args-->
+| 参数      | 描述                           |
+|-----------|--------------------------------|
+| `ROOTDIR` | Nuxt 模块的根目录（默认值：.） |
+<!--/module-prepare-args-->
+
+### 选项
+
+<!--module-prepare-opts-->
+| 选项                 | 默认值 | 描述                    |
+|----------------------|--------|-------------------------|
+| `--cwd=<directory>`  |        | 指定 Nuxt 模块的根目录  |
+<!--/module-prepare-opts-->
+
+此命令会将所有参数传递给 `@nuxt/module-builder` 中的 `nuxt-module-build prepare`，为模块创建 `.nuxt` 目录并生成类型。
+
+**示例：**
+
+```bash [Terminal]
+npx nuxt module prepare
+```
+
+::read-more{to="https://github.com/nuxt/module-builder/blob/main/docs/2.commands.md#prepare" icon="i-simple-icons-github" target="\_blank"}
+详细了解 `nuxt-module-build prepare`。
+::

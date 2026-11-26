@@ -1,4 +1,4 @@
-import type { NuxtModule } from '@nuxt/schema'
+import type { Nuxt, NuxtConfig, NuxtModule } from '@nuxt/schema'
 import type { PackageJson } from 'pkg-types'
 
 import os from 'node:os'
@@ -10,22 +10,29 @@ import { defineCommand } from 'citty'
 
 import { readPackageJSON } from 'pkg-types'
 import { isBun, isDeno, isMinimal } from 'std-env'
-import { writeText } from 'tinyclip'
 import { version as nuxiVersion } from '../../package.json'
 
 import { getBuilder } from '../utils/banner'
+import { writeClipboard } from '../utils/clipboard'
 import { printJson } from '../utils/console'
 import { formatInfoBox } from '../utils/formatting'
 import { logger } from '../utils/logger'
-import { resolveNitroVersion } from '../utils/nitro'
+import { readNitroMajor, resolveNitroMajor, resolveNitroVersion } from '../utils/nitro'
 import { getNuxtConfig } from '../utils/nuxt-config'
 import { readDependencyPackageJson } from '../utils/package-json'
 import { detectPackageManager, getPackageManagerVersion } from '../utils/package-managers'
 import { resolveRootDir } from '../utils/paths'
 import { tryResolveNuxt } from '../utils/resolve-nuxt'
+import { getServerBuilderName } from '../utils/server-build'
 import { rootDirArgs } from './_shared'
 
 const LEADING_SLASH_RE = /^\//
+
+/** Server builders other than Nitro released with Nuxt, by each `server.builder` value naming them. */
+const NUXT_SERVER_BUILDERS: Record<string, string> = {
+  'vite': 'vite',
+  '@nuxt/vite-server': 'vite',
+}
 
 /** JSON key for each display label, so `--json` output stays stable if a label is reworded. */
 const JSON_KEYS: Record<string, string> = {
@@ -37,7 +44,7 @@ const JSON_KEYS: Record<string, string> = {
   'nuxt/cli version': 'cliVersion',
   'Package manager': 'packageManager',
   'Nuxt version': 'nuxtVersion',
-  'Nitro version': 'nitroVersion',
+  'Server builder': 'serverBuilder',
   'Builder': 'builder',
   'Config': 'config',
   'Modules': 'modules',
@@ -58,7 +65,9 @@ export default defineCommand({
   async run(ctx) {
     const cwd = resolveRootDir(ctx.args)
     const packageManagerPromise = detectPackageManager(cwd).then(async detected =>
-      detected ? `${detected.name}@${await getPackageManagerVersion(detected.name)}` : 'unknown')
+      detected
+        ? `${detected.name}@${await getPackageManagerVersion(detected.name)}`
+        : 'unknown')
     const [nuxtConfig, projectPkg] = await Promise.all([
       getNuxtConfig(cwd),
       readPackageJSON(cwd).catch(() => ({} as PackageJson)),
@@ -80,28 +89,50 @@ export default defineCommand({
       if (!name) {
         return null
       }
-      const specifier = Array.isArray(module) ? module[0] : module
+      const specifier = Array.isArray(module)
+        ? module[0]
+        : module
       const packageName = typeof specifier === 'string' && getPackageName(specifier)
       const version = packageName && await getDepVersion(packageName)
-      return version ? `${name}@${version}` : name
+      return version
+        ? `${name}@${version}`
+        : name
     }))
     const [modules, nuxtVersion = '-', nitroVersion, packageManager] = await Promise.all([
       modulesPromise,
       getDepVersion('nuxt').then(version => version || getDepVersion('nuxt-nightly')),
-      resolveNitroVersion(cwd, getDepVersion),
+      resolveNitroVersion(cwd, getDepVersion, resolveNitroMajor(cwd, readNitroMajor(nuxtConfig))),
       packageManagerPromise,
     ])
     const configKeys = Object.keys(nuxtConfig).sort()
     const moduleNames = modules.filter(module => module !== null)
     const builder = nuxtConfig.builder || 'vite'
+    // Read from the config, without loading Nuxt, the same way as for a loaded app.
+    const usesNitro = getServerBuilderName({ options: nuxtConfig } as unknown as Nuxt) === 'Nitro'
+    const serverBuilder = usesNitro
+      ? nitroVersion
+        ? `nitro@${nitroVersion}`
+        : 'nitro'
+      : await describeServerBuilder(nuxtConfig, getDepVersion)
     const osType = os.type()
     const cpus = os.cpus()
-    const builderInfo = typeof builder === 'string' && ['vite', '@nuxt/vite-builder', 'webpack', '@nuxt/webpack-builder', 'rspack', '@nuxt/rspack-builder'].includes(builder)
+    const builderInfo = typeof builder === 'string' && [
+      'vite',
+      '@nuxt/vite-builder',
+      'webpack',
+      '@nuxt/webpack-builder',
+      'rspack',
+      '@nuxt/rspack-builder',
+    ].includes(builder)
       ? getBuilder(cwd, builder)
       : { name: 'custom', version: '0.0.0' }
 
     const infoObj = {
-      'Operating system': osType === 'Darwin' ? `macOS ${os.release()}` : osType === 'Windows_NT' ? `Windows ${os.release()}` : `${osType} ${os.release()}`,
+      'Operating system': osType === 'Darwin'
+        ? `macOS ${os.release()}`
+        : osType === 'Windows_NT'
+          ? `Windows ${os.release()}`
+          : `${osType} ${os.release()}`,
       'CPU': `${cpus[0]?.model || 'unknown'} (${cpus.length} cores)`,
       ...isBun
         // @ts-expect-error Bun global
@@ -113,8 +144,10 @@ export default defineCommand({
       'nuxt/cli version': nuxiVersion,
       'Package manager': packageManager,
       'Nuxt version': nuxtVersion,
-      'Nitro version': nitroVersion,
-      'Builder': builderInfo.name === 'custom' ? 'custom' : `${builderInfo.name.toLowerCase()}@${builderInfo.version}`,
+      'Server builder': serverBuilder,
+      'Builder': builderInfo.name === 'custom'
+        ? 'custom'
+        : `${builderInfo.name.toLowerCase()}@${builderInfo.version}`,
       'Config': configKeys.map(key => `\`${key}\``).join(', '),
       'Modules': moduleNames.map(name => `\`${name}\``).join(', '),
     }
@@ -129,6 +162,7 @@ export default defineCommand({
           const key = JSON_KEYS[label]!
           return [key, lists[key] ?? (value?.replaceAll('`', '') || null)]
         })),
+        nitroVersion: (usesNitro && nitroVersion) || null,
       })
       return
     }
@@ -138,7 +172,7 @@ export default defineCommand({
     const boxStr = formatInfoBox(infoObj)
 
     const copyStr = formatMarkdownTable(infoObj)
-    const copied = !isMinimal && await writeText(copyStr).then(() => true).catch(() => false)
+    const copied = !isMinimal && await writeClipboard(copyStr)
 
     if (copied) {
       box(
@@ -197,7 +231,9 @@ export function formatJsonAsMarkdownTable(json: Record<string, unknown>): string
   const info: Record<string, string | undefined> = {}
   for (const [key, value] of Object.entries(json)) {
     if (labels[key]) {
-      info[labels[key]] = Array.isArray(value) ? value.map(item => `\`${item}\``).join(', ') : (value as string | null) ?? undefined
+      info[labels[key]] = Array.isArray(value)
+        ? value.map(item => `\`${item}\``).join(', ')
+        : (value as string | null) ?? undefined
     }
   }
   return formatMarkdownTable(info)
@@ -206,9 +242,13 @@ export function formatJsonAsMarkdownTable(json: Record<string, unknown>): string
 export function formatMarkdownTable(info: Record<string, string | undefined>): string {
   const entries = Object.entries(info).map(([label, value]) => [label, value || '-'] as const)
   const labelWidth = Math.max(...entries.map(([label]) => label.length + 4))
-  const valueWidth = Math.max(...entries.map(([, value]) => value.length + (value.includes('`') ? 0 : 2)))
+  const valueWidth = Math.max(...entries.map(([, value]) => value.length + (value.includes('`')
+    ? 0
+    : 2)))
   const rows = entries.map(([label, value]) => {
-    const formattedValue = value.includes('`') ? value : `\`${value}\``
+    const formattedValue = value.includes('`')
+      ? value
+      : `\`${value}\``
     return `| ${`**${label}**`.padEnd(labelWidth)} | ${formattedValue.padEnd(valueWidth)} |`
   })
   return [
@@ -224,7 +264,9 @@ export function getPackageName(name: string): string | undefined {
     return undefined
   }
   const parts = name.split('/')
-  return name.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0]
+  return name.startsWith('@')
+    ? parts.slice(0, 2).join('/')
+    : parts[0]
 }
 
 export function normalizeConfigModule(
@@ -252,4 +294,28 @@ export function normalizeConfigModule(
     return normalizeConfigModule(module[0], rootDir)
   }
   return null
+}
+
+/**
+ * A server builder other than Nitro: its name when it is released with Nuxt,
+ * otherwise the package or path `server.builder` names (with the package's
+ * version), or `custom` for one defined inline.
+ */
+async function describeServerBuilder(
+  nuxtConfig: NuxtConfig,
+  getDepVersion: (name: string) => Promise<string | undefined>,
+): Promise<string> {
+  const configured = (nuxtConfig as { server?: { builder?: unknown } }).server?.builder
+  if (typeof configured !== 'string') {
+    return 'custom'
+  }
+  const nuxtBuilder = NUXT_SERVER_BUILDERS[configured]
+  if (nuxtBuilder) {
+    return nuxtBuilder
+  }
+  const packageName = getPackageName(configured)
+  const version = packageName && await getDepVersion(packageName)
+  return version
+    ? `${configured}@${version}`
+    : configured
 }

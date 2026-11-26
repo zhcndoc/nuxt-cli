@@ -1,5 +1,6 @@
 {
   "name": "nuxt-cli-playground",
+  "type": "module",
   "version": "1.0.0",
   "private": true,
   "scripts": {
@@ -10,12 +11,12 @@
     "test": "vitest"
   },
   "dependencies": {
-    "nuxt": "^4.6.1",
-    "vue-router": "^5.3.1"
+    "nuxt": "^4.6.2",
+    "vue-router": "^5.5.1"
   },
   "devDependencies": {
-    "@nuxt/test-utils": "^4.3.3",
+    "@nuxt/test-utils": "^4.4.0",
     "typescript": "^6.0.3",
-    "vue-tsc": "^3.3.12"
+    "vue-tsc": "^3.3.14"
   }
 }

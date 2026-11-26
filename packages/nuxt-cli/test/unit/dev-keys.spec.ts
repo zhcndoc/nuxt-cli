@@ -1,3 +1,5 @@
+import type { MouseReport } from '../../src/dev/tui/terminal-replies'
+
 import { Buffer } from 'node:buffer'
 import process from 'node:process'
 import { PassThrough } from 'node:stream'
@@ -19,17 +21,35 @@ describe('panel keys', () => {
 
   function attach(options?: { ignoreBufferedInput?: boolean }) {
     const stdin = new PassThrough() as unknown as typeof process.stdin
-    Object.assign(stdin, { isTTY: true, isRaw: false, setRawMode: (raw: boolean) => Object.assign(stdin, { isRaw: raw }) })
+    Object.assign(stdin, {
+      isTTY: true,
+      isRaw: false,
+      setRawMode: (raw: boolean) => Object.assign(stdin, { isRaw: raw }),
+    })
     const original = Object.getOwnPropertyDescriptor(process, 'stdin')!
     Object.defineProperty(process, 'stdin', { value: stdin, configurable: true })
     restores.push(() => Object.defineProperty(process, 'stdin', original))
 
     const keys: Array<string | undefined> = []
-    const detach = attachKeys(key => keys.push(key.name), options)
+    const mouse: MouseReport[] = []
+    const order: Array<string | undefined> = []
+    const detach = attachKeys((key) => {
+      keys.push(key.name)
+      order.push(key.name)
+    }, {
+      ...options,
+      onMouse: (report) => {
+        mouse.push(report)
+        order.push('mouse')
+      },
+    })
     restores.push(detach)
 
     return {
       keys,
+      mouse,
+      order,
+      detach,
       type: async (text: string) => {
         stdin.write(text)
         await new Promise(resolve => setImmediate(resolve))
@@ -109,7 +129,9 @@ describe('panel keys', () => {
   })
 
   it('should give the keyboard back when a reply is never terminated', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout'],
+    })
     restores.push(() => vi.useRealTimers())
     const { keys, type } = attach()
 
@@ -130,6 +152,114 @@ describe('panel keys', () => {
     expect(keys).toEqual(['up', 'f1', 'q'])
   })
 
+  it('should read a mouse report as the mouse, not as keys', async () => {
+    const { keys, mouse, type } = attach()
+
+    await type('\u001B[<0;12;5M')
+    await type('\u001B[<0;12;5m')
+    await type('o')
+
+    expect(keys).toEqual(['o'])
+    expect(mouse).toEqual([
+      {
+        button: 0,
+        pressed: true,
+        row: 4,
+        column: 11,
+      },
+      {
+        button: 0,
+        pressed: false,
+        row: 4,
+        column: 11,
+      },
+    ])
+  })
+
+  it('should read every report of a wheel burst, and the key after it', async () => {
+    const { keys, mouse, type } = attach()
+
+    await type('\u001B[<64;1;1M\u001B[<64;1;1Mo')
+    await new Promise(resolve => setImmediate(resolve))
+
+    expect(keys).toEqual(['o'])
+    expect(mouse).toHaveLength(2)
+  })
+
+  it('should read mouse reports queued behind a typed key', async () => {
+    const { keys, mouse, type } = attach()
+
+    await type('o\u001B[<0;12;5M\u001B[<0;12;5mp')
+    await new Promise(resolve => setImmediate(resolve))
+
+    expect(keys).toEqual(['o', 'p'])
+    expect(mouse).toEqual([
+      {
+        button: 0,
+        pressed: true,
+        row: 4,
+        column: 11,
+      },
+      {
+        button: 0,
+        pressed: false,
+        row: 4,
+        column: 11,
+      },
+    ])
+  })
+
+  it('should read keys and mouse reports in the order they arrived', async () => {
+    const { order, type } = attach()
+
+    await type('\u001B[<64;1;1Mo\u001B[<0;12;5M')
+    await new Promise(resolve => setImmediate(resolve))
+
+    expect(order).toEqual(['mouse', 'o', 'mouse'])
+  })
+
+  it('should drop mouse reports still queued behind a key once detached', async () => {
+    const { mouse, detach } = attach()
+
+    process.stdin.emit('data', Buffer.from('o\u001B[<0;12;5M'))
+    detach()
+    await new Promise(resolve => setImmediate(resolve))
+
+    expect(mouse).toEqual([])
+  })
+
+  it('should read a report cut short behind others once the rest arrives', async () => {
+    const { keys, mouse, type } = attach()
+
+    process.stdin.emit('data', Buffer.from('\u001B[<65;1;1M\u001B[<65;1'))
+    process.stdin.emit('data', Buffer.from(';1M'))
+    await type('o')
+
+    expect(keys).toEqual(['o'])
+    expect(mouse).toHaveLength(2)
+  })
+
+  it('should read a report cut short behind a typed key once the rest arrives', async () => {
+    const { order, type } = attach()
+
+    await type('o\u001B[<65;1;1M\u001B[<65;1')
+    await type(';1M')
+    await type('p')
+
+    expect(order).toEqual(['o', 'mouse', 'mouse', 'p'])
+  })
+
+  it('should read a mouse report that arrives in pieces', async () => {
+    const { keys, mouse, type } = attach()
+
+    await type('\u001B[<65;1')
+    await type(';1M')
+    await type('o')
+
+    expect(keys).toEqual(['o'])
+    expect(mouse).toHaveLength(1)
+  })
+
   it('should drop input buffered before it took stdin, when asked to', async () => {
     const buffered = attach({ ignoreBufferedInput: true })
     await buffered.type('ooo')
@@ -138,6 +268,16 @@ describe('panel keys', () => {
     const live = attach()
     await live.type('ooo')
     expect(live.keys).toEqual(['o', 'o', 'o'])
+  })
+
+  it('should drop a mouse report buffered before it took stdin, when asked to', async () => {
+    const buffered = attach({ ignoreBufferedInput: true })
+    await buffered.type('\u001B[<0;1;1M')
+    expect(buffered.mouse).toEqual([])
+
+    const live = attach()
+    await live.type('\u001B[<0;1;1M')
+    expect(live.mouse).toHaveLength(1)
   })
 })
 

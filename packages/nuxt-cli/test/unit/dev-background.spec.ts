@@ -5,12 +5,18 @@ import { PassThrough } from 'node:stream'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 type Background = typeof import('../../src/dev/tui/background')
+type Stdin = typeof import('../../src/utils/stdin')
 type Theme = typeof import('../../src/utils/terminal-theme')
 
 /** A tty that answers with `reply`, or stays silent when given nothing. */
 function stubStdin(reply?: string) {
   const listeners = new Set<(chunk: Buffer) => void>()
-  const calls = { raw: [] as boolean[], paused: false, resumed: false, unshifted: [] as string[] }
+  const calls = {
+    raw: [] as boolean[],
+    paused: false,
+    resumed: false,
+    unshifted: [] as string[],
+  }
   return {
     calls,
     /** Send bytes as if the user or the terminal had, after the query. */
@@ -40,12 +46,13 @@ function stubStdin(reply?: string) {
 
 describe('terminal background query', () => {
   let queryBackground: Background['queryBackground']
-  let whenStdinReleased: Background['whenStdinReleased']
+  let whenStdinReleased: Stdin['whenStdinReleased']
   let resolveBackground: Theme['resolveBackground']
 
   beforeEach(async () => {
     vi.resetModules()
-    ;({ queryBackground, whenStdinReleased } = await import('../../src/dev/tui/background'))
+    ;({ queryBackground } = await import('../../src/dev/tui/background'))
+    ;({ whenStdinReleased } = await import('../../src/utils/stdin'))
     ;({ resolveBackground } = await import('../../src/utils/terminal-theme'))
   })
 
@@ -133,10 +140,14 @@ describe('terminal background query', () => {
     const { attachKeys } = await import('../../src/dev/tui/keys')
     const stdin = new PassThrough() as unknown as typeof process.stdin
     const raw: boolean[] = []
-    Object.assign(stdin, { isTTY: true, isRaw: false, setRawMode: (mode: boolean) => {
-      raw.push(mode)
-      Object.assign(stdin, { isRaw: mode })
-    } })
+    Object.assign(stdin, {
+      isTTY: true,
+      isRaw: false,
+      setRawMode: (mode: boolean) => {
+        raw.push(mode)
+        Object.assign(stdin, { isRaw: mode })
+      },
+    })
     const original = Object.getOwnPropertyDescriptor(process, 'stdin')!
     Object.defineProperty(process, 'stdin', { value: stdin, configurable: true })
 
@@ -173,7 +184,9 @@ describe('terminal background query', () => {
   })
 
   it('is not holding stdin when there was nothing to ask', async () => {
-    await expect(ask(undefined, { env: { TERM: 'dumb' } }).answer).resolves.toBe('unknown')
+    await expect(ask(undefined, {
+      env: { TERM: 'dumb' },
+    }).answer).resolves.toBe('unknown')
     expect(whenStdinReleased()).toBeUndefined()
   })
 
@@ -236,9 +249,18 @@ describe('terminal background query', () => {
   })
 
   it.each([
-    ['a request for no colour', { NO_COLOR: '1' }],
-    ['a terminal that cannot answer', { TERM: 'dumb' }],
-    ['screen, which never passes the reply back', { TERM: 'screen.xterm-256color' }],
+    [
+      'a request for no colour',
+      { NO_COLOR: '1' },
+    ],
+    [
+      'a terminal that cannot answer',
+      { TERM: 'dumb' },
+    ],
+    [
+      'screen, which never passes the reply back',
+      { TERM: 'screen.xterm-256color' },
+    ],
   ])('does not ask %s', async (_case, env) => {
     const { answer, written } = ask('\u001B]11;rgb:ffff/ffff/ffff\u0007', { env })
 
@@ -247,13 +269,17 @@ describe('terminal background query', () => {
   })
 
   it('asks inside tmux, which answers for the terminal', async () => {
-    const { answer } = ask('\u001B]11;rgb:ffff/ffff/ffff\u0007', { env: { TERM: 'screen-256color', TMUX: '/tmp/tmux-1/default' } })
+    const { answer } = ask('\u001B]11;rgb:ffff/ffff/ffff\u0007', {
+      env: { TERM: 'screen-256color', TMUX: '/tmp/tmux-1/default' },
+    })
 
     await expect(answer).resolves.toBe('light')
   })
 
   it('takes an explicit setting over anything the terminal would say', async () => {
-    const { answer, written } = ask('\u001B]11;rgb:ffff/ffff/ffff\u0007', { env: { NUXT_TERM_THEME: 'dark' } })
+    const { answer, written } = ask('\u001B]11;rgb:ffff/ffff/ffff\u0007', {
+      env: { NUXT_TERM_THEME: 'dark' },
+    })
 
     await expect(answer).resolves.toBe('dark')
     expect(written).toEqual([])

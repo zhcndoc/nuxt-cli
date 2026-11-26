@@ -6,6 +6,7 @@ import process from 'node:process'
 import { isCI, isTest } from 'std-env'
 
 import { debug } from '../../utils/logger'
+import { holdStdin } from '../../utils/stdin'
 import { rememberBackground, resolveBackground } from '../../utils/terminal-theme'
 
 /** OSC 11: report the background colour. */
@@ -52,16 +53,6 @@ export interface QueryBackgroundOptions {
 }
 
 let pending: Promise<TerminalBackground> | undefined
-let held: Promise<void> | undefined
-
-/**
- * Settles when the query has given stdin back, or is undefined if nothing is
- * holding it. A key reader must wait for this, or it parses the terminal's
- * escape-sequence answer as a run of keystrokes.
- */
-export function whenStdinReleased(): Promise<void> | undefined {
-  return held
-}
 
 /**
  * Ask the terminal what colour its background is, and remember the answer.
@@ -89,13 +80,7 @@ async function resolve(options: QueryBackgroundOptions): Promise<TerminalBackgro
   }
 
   const stdin = options.stdin ?? process.stdin
-  let releaseStdin!: () => void
-  held = new Promise<void>((settle) => {
-    releaseStdin = () => {
-      held = undefined
-      settle()
-    }
-  })
+  const releaseStdin = holdStdin()
 
   try {
     const session = listen(stdin, options.timeout ?? REPLY_TIMEOUT_MS, () => options.write(QUERY), releaseStdin)
@@ -103,7 +88,9 @@ async function resolve(options: QueryBackgroundOptions): Promise<TerminalBackgro
     const answered = REPLY_RE.exec(buffer)
     // Anything typed while the terminal was thinking is put back for whoever
     // reads keys next, rather than being swallowed by the question.
-    const typed = answered ? buffer.replace(answered[0], '') : buffer
+    const typed = answered
+      ? buffer.replace(answered[0], '')
+      : buffer
     if (typed) {
       stdin.unshift(Buffer.from(typed, 'latin1'))
     }
@@ -118,7 +105,9 @@ async function resolve(options: QueryBackgroundOptions): Promise<TerminalBackgro
       return 'unknown'
     }
 
-    return brightness(reply) > LIGHT_THRESHOLD ? 'light' : 'dark'
+    return brightness(reply) > LIGHT_THRESHOLD
+      ? 'light'
+      : 'dark'
   }
   catch (error) {
     debug('Could not ask the terminal for its background:', error)

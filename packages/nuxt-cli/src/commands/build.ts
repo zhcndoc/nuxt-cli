@@ -7,6 +7,8 @@ import { relative } from 'pathe'
 import { resolveDotenvFileNames } from '../utils/args'
 import { showBanner } from '../utils/banner'
 import { BuildProgress } from '../utils/build-progress'
+import { createBuildReport } from '../utils/build-report'
+import { configureProjectConsola, reportThroughClack } from '../utils/console'
 import { overrideEnv } from '../utils/env'
 
 import { ActionableError } from '../utils/errors'
@@ -16,9 +18,10 @@ import { loadKit } from '../utils/kit'
 import { acquireLock, acquireOutputLock, formatLockError } from '../utils/lockfile'
 import { intro, logger, outro } from '../utils/logger'
 import { resolveRootDir } from '../utils/paths'
-import { createPhaseReporter, formatPhaseBreakdown } from '../utils/phase-reporter'
+import { createPhaseReporter, formatPhaseBreakdown, formatPhaseTable } from '../utils/phase-reporter'
 import { startCpuProfile, stopCpuProfile } from '../utils/profile'
 import { resolveServerBuild } from '../utils/server-build'
+import { MUTED } from '../utils/terminal-theme'
 import { dotEnvArgs, envNameArgs, extendsArgs, logLevelArgs, profileArgs, rootDirArgs, targetArgs } from './_shared'
 
 /** How often a phase repeats itself where there is no animated line. */
@@ -51,7 +54,9 @@ export default defineCommand({
 
     const profileArg = ctx.args.profile
     const profiling = profileArg !== undefined
-    const perfValue = profileArg === 'verbose' ? true : profiling ? 'quiet' : undefined
+    const perfValue = profileArg === 'verbose'
+      ? true
+      : profiling ? 'quiet' : undefined
     if (profiling) {
       await startCpuProfile()
     }
@@ -59,8 +64,10 @@ export default defineCommand({
     const releaseLocks: Array<() => void> = []
     const progress = new BuildProgress()
     let stopReporting = () => {}
+    let stopClackReporting = () => {}
     try {
       intro(styleText('cyan', 'Building Nuxt for production...'))
+      stopClackReporting = reportThroughClack()
 
       // The phase line owns a row of the terminal, which a silent build has no
       // business drawing on. Subscribed after the intro so the first phase is
@@ -79,6 +86,7 @@ export default defineCommand({
       }
 
       const kit = await loadKit(cwd)
+      await configureProjectConsola(cwd)
       const nuxt = await kit.loadNuxt({
         cwd,
         ready: false,
@@ -106,6 +114,10 @@ export default defineCommand({
       })
 
       progress.attachNuxt(nuxt)
+      const report = createBuildReport(nuxt, {
+        progress,
+        command: ctx.args.prerender ? 'generate' : 'build',
+      })
 
       showBanner(nuxt)
       await nuxt.ready()
@@ -122,7 +134,7 @@ export default defineCommand({
       const serverBuild = resolveServerBuild(kit, nuxt)
       const target = serverBuild.target
       if (target) {
-        logger.info(`${serverBuild.label} ${serverBuild.targetLabel}: ${styleText('cyan', target)}`)
+        logger.info(`Deploy target: ${styleText('cyan', target)}`)
       }
 
       const outputDir = serverBuild.dir
@@ -131,7 +143,9 @@ export default defineCommand({
         cwd,
       })
       if (outputLock.existing) {
-        throw new ActionableError(formatLockError(outputLock.existing, { outputDir: relative(process.cwd(), outputDir) }))
+        throw new ActionableError(formatLockError(outputLock.existing, {
+          outputDir: relative(process.cwd(), outputDir),
+        }))
       }
       releaseLocks.push(outputLock.release)
 
@@ -143,27 +157,44 @@ export default defineCommand({
 
       stopReporting()
       progress.finish()
+      const elapsed = Date.now() - start
 
-      const breakdown = formatPhaseBreakdown(progress.timings)
-      if (breakdown) {
-        logger.message(styleText('dim', breakdown))
+      const verbose = nuxt.options.logLevel === 'verbose'
+      const summary = nuxt.options.logLevel === 'silent'
+        ? undefined
+        : await report.summary(verbose)
+      if (summary) {
+        logger.success(summary)
       }
 
-      if (ctx.args.prerender) {
-        if (!nuxt.options.ssr) {
-          logger.warn(`HTML content not prerendered because ${styleText('cyan', 'ssr: false')} was set.`)
-          logger.info(`You can read more in ${styleText('cyan', 'https://nuxt.com/docs/getting-started/deployment#static-hosting')}.`)
-        }
-        const dir = serverBuild.publicDir
-        const publicDir = dir ? relative(process.cwd(), dir) : '.output/public'
-        outro(`✨ You can now deploy ${styleText('cyan', publicDir)} to any static hosting! ${styleText('gray', `(${formatDuration(Date.now() - start)})`)}`)
+      if (ctx.args.prerender && !nuxt.options.ssr) {
+        logger.warn(`HTML content not prerendered because ${styleText('cyan', 'ssr: false')} was set.`)
+        logger.info(`You can read more in ${styleText('cyan', 'https://nuxt.com/docs/getting-started/deployment#static-hosting')}.`)
+      }
+
+      const breakdown = verbose
+        ? formatPhaseTable(progress.timings)
+        : formatPhaseBreakdown(progress.phaseTimings)
+      const total = `Build complete in ${styleText('cyan', formatDuration(elapsed))}`
+      const complete = breakdown
+        ? `${total}\n${verbose
+          ? breakdown
+          : styleText(MUTED, breakdown)}`
+        : total
+      const next = ctx.args.prerender
+        ? report.staticCommands(serverBuild)
+        : report.commands(serverBuild)
+      if (next.length) {
+        logger.success(complete)
+        outro(next.join('\n'))
       }
       else {
-        outro(`✨ Build complete in ${styleText('cyan', formatDuration(Date.now() - start))}!`)
+        outro(complete)
       }
     }
     finally {
       stopReporting()
+      stopClackReporting()
       for (const release of releaseLocks.reverse()) {
         release()
       }

@@ -2,6 +2,7 @@ import type { Renderer } from 'ansivision'
 import type { Listener } from '../../src/dev/listen'
 import type { ShortcutContext } from '../../src/dev/shortcuts'
 
+import { networkInterfaces } from 'node:os'
 import { PassThrough } from 'node:stream'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -20,8 +21,11 @@ vi.mock('../../src/dev/environment', () => ({
   detectIsolatedEnvironment: () => isolatedEnvironment.current,
 }))
 
-const { listen, openBrowser, printQRCode } = await import('../../src/dev/listen')
+const { createListener, listen, openBrowser, printQRCode } = await import('../../src/dev/listen')
 const { setupShortcuts } = await import('../../src/dev/shortcuts')
+
+/** A non-loopback IPv4 address of this machine, when it has one. */
+const networkAddress = Object.values(networkInterfaces()).flat().find(info => info && !info.internal && info.family === 'IPv4')?.address
 
 /** SGR foreground colour indexes, as reported by `ansivision`. */
 const GREEN = 2
@@ -47,6 +51,8 @@ function stubDisplay({ browser, browserArgs }: { browser?: string, browserArgs?:
     WSL_DISTRO_NAME: undefined,
     BROWSER: browser,
     BROWSER_ARGS: browserArgs,
+    TERM: undefined,
+    TERM_PROGRAM: undefined,
   }
   return () => {
     Object.defineProperty(process, 'platform', { value: platform, configurable: true })
@@ -112,6 +118,42 @@ describe('dev server terminal output', () => {
       expect(screen(renderer)).not.toContain('use --host')
     })
 
+    it.skipIf(!networkAddress)('should not hint at `--host` when bound to a network address', async () => {
+      const renderer = await render(() => start({ hostname: networkAddress }))
+
+      expect(screen(renderer)).toContain(`➜ Local:    http://${networkAddress}:<port>/`)
+      expect(screen(renderer)).not.toContain('use --host')
+    })
+
+    it('should not hint at `--host` when the bound address is not loopback', async () => {
+      const { server, address, https } = await start({ hostname: '127.0.0.1', showURL: false })
+
+      const renderer = await render(() => createListener({
+        server,
+        address: { ...address, address: '192.168.1.20' },
+        https,
+        hostname: '192.168.1.20',
+      }, { qr: false }))
+
+      expect(screen(renderer)).toContain('➜ Local:    http://192.168.1.20:<port>/')
+      expect(screen(renderer)).not.toContain('use --host')
+    })
+
+    it('should hint at `--host` from inside a container for a loopback name', async () => {
+      const { server, address, https } = await start({ hostname: '127.0.0.1', showURL: false })
+      isolatedEnvironment.current = 'the container'
+
+      const renderer = await render(() => createListener({
+        server,
+        address,
+        https,
+        hostname: 'app.localhost',
+      }, { qr: false }))
+
+      expect(screen(renderer)).toContain('➜ Local:    http://app.localhost:<port>/')
+      expect(screen(renderer)).toContain('➜ Network:  use --host to reach this server from outside the container')
+    })
+
     it('should colour each url type differently', async () => {
       const renderer = await render(() => start())
       renderer.goToFrame(renderer.frames.length - 1)
@@ -120,6 +162,12 @@ describe('dev server terminal output', () => {
       expect(colourOf(renderer, 'Local:')).toBe(GREEN)
       expect(colourOf(renderer, 'Network:')).toBe(MAGENTA)
       expect(colourOf(renderer, 'http://localhost')).toBe(CYAN)
+    })
+
+    it('should keep the `--host` hint legible on a light background', async () => {
+      const renderer = await render(() => start())
+
+      expect(colourOf(renderer, '--host')).toBe(CYAN)
     })
 
     it('should flag which url the qr code points at', async () => {
@@ -186,6 +234,18 @@ describe('dev server terminal output', () => {
       expect(screen(renderer)).toContain('No clipboard is available in this environment.')
     })
 
+    it('should copy through the terminal where no clipboard tool can reach it', async () => {
+      const restore = stubDisplay()
+      process.env.TERM = 'tmux-256color'
+      const { press } = await withShortcuts()
+
+      const renderer = await render(() => press('copy'))
+      restore()
+
+      expect(screen(renderer)).toContain('URL copied to clipboard.')
+      expect(screen(renderer)).not.toContain('No clipboard is available')
+    })
+
     it('should list the available shortcuts', async () => {
       const { press } = await withShortcuts()
 
@@ -204,7 +264,9 @@ describe('dev server terminal output', () => {
     })
 
     it('should list restart first when a restart handler is available', async () => {
-      const { press } = await withShortcuts({ restart: () => {} })
+      const { press } = await withShortcuts({
+        restart: () => {},
+      })
 
       const renderer = await render(() => press('h'))
 
@@ -216,10 +278,7 @@ describe('dev server terminal output', () => {
     it('should say so when the browser launcher fails', async () => {
       const restore = stubDisplay({ browser: '/definitely/not/a/launcher' })
 
-      const renderer = await render(async ({ waitForOutput }) => {
-        openBrowser('http://localhost:3000/')
-        await waitForOutput('Could not open')
-      })
+      const renderer = await render(() => openBrowser('http://localhost:3000/'))
       restore()
 
       expect(screen(renderer)).toContain('Could not open http://localhost:<port>/ in a browser.')
@@ -229,10 +288,7 @@ describe('dev server terminal output', () => {
       // A launcher that fails, without depending on a platform-specific binary.
       const restore = stubDisplay({ browser: process.execPath, browserArgs: '-e process.exit(1)' })
 
-      const renderer = await render(async ({ waitForOutput }) => {
-        openBrowser('http://localhost:3000/')
-        await waitForOutput('Could not open')
-      })
+      const renderer = await render(() => openBrowser('http://localhost:3000/'))
       restore()
 
       expect(screen(renderer)).toContain('Could not open http://localhost:<port>/ in a browser.')

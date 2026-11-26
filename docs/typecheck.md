@@ -10,7 +10,7 @@ links:
 
 <!--typecheck-cmd-->
 ```bash [Terminal]
-npx nuxt typecheck [ROOTDIR] [--cwd=<directory>] [--logLevel=<silent|info|verbose>] [--dotenv=<path>...] [-e, --extends=<layer-name>...] [--checker=<vue-tsc|golar>] [-b, --build]
+npx nuxt typecheck [ROOTDIR] [--cwd=<directory>] [--logLevel=<silent|info|verbose>] [--dotenv=<path>...] [-e, --extends=<layer-name>...] [--checker=<vue-tsc|golar>] [-b, --build] [--incremental]
 ```
 <!--/typecheck-cmd-->
 
@@ -36,6 +36,8 @@ npx nuxt typecheck [ROOTDIR] [--cwd=<directory>] [--logLevel=<silent|info|verbos
 | `--checker=<vue-tsc\|golar>`         |         | 要使用的类型检查器                                                                                               |
 | `-b, --build`                        |         | 在构建模式下进行类型检查，使用 TypeScript 项目引用（默认会自动检测）                 |
 | `--no-build`                         |         | 不使用 TypeScript 项目引用进行类型检查                                                                  |
+| `--incremental`                      | `true`  | 复用先前运行的类型信息                                                                                 |
+| `--no-incremental`                   |         | 从头进行类型检查，不复用先前运行的类型信息                                                               |
 <!--/typecheck-opts-->
 
 ## 类型检查器
@@ -45,6 +47,20 @@ npx nuxt typecheck [ROOTDIR] [--cwd=<directory>] [--logLevel=<silent|info|verbos
 ## 构建模式
 
 解决方案样式的 `tsconfig.json`（只列出 `references` 的配置文件）会自动在构建模式下进行类型检查。`--build` 会强制启用构建模式，而 `--no-build` 会将其关闭。
+
+## 增量类型检查
+
+在构建模式下，每次运行的类型信息都会存储在 `tsconfig.json` 所引用的每个项目的 `tsBuildInfoFile` 中，因此后续运行只需重新检查发生变化的部分。从 Nuxt v4.7 开始，Nuxt 生成的项目配置会将其存储在 `.nuxt/cache/typecheck` 中，该缓存会由 `nuxt prepare` 和 `nuxt dev` 保留。更换类型检查器或 TypeScript 版本时会丢弃缓存；如果任何被引用的项目没有 `tsBuildInfoFile`，则不会使用缓存。传入 `--no-incremental` 可删除缓存的类型信息并从头进行类型检查。
+
+## 内存
+
+类型检查器会在独立进程中运行。除非设置了 `--max-old-space-size`，否则 `vue-tsc` 的堆内存上限会提高到机器（或容器）内存的一半，最高为 8 GB，且不超过当前可用内存；不会低于 Node 的默认值。Golar 在 JavaScript 堆之外执行类型检查，因此不会调整它的内存上限。
+
+如果类型检查器被终止（例如因内存不足），`nuxt typecheck` 会报告信号，并以 `128` 加信号编号作为退出码（`SIGABRT` 为 `134`，`SIGKILL` 为 `137`）。如需自行提高堆内存上限：
+
+```bash [Terminal]
+NODE_OPTIONS=--max-old-space-size=8192 npx nuxt typecheck
+```
 
 ::note
 此命令会将 `process.env.NODE_ENV` 设置为 `production`。要覆盖此设置，请在 [`.env`](/docs/directory-structure/env) 文件中定义 `NODE_ENV`，或将其作为命令行参数传入。

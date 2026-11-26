@@ -80,4 +80,76 @@ describe('startup clock', () => {
     vi.advanceTimersByTime(400)
     expect(clock.startupElapsedMs(start)).toBe(400)
   })
+
+  it('should wait for the terminal background query to give stdin back', async () => {
+    vi.useRealTimers()
+    const { queryBackground } = await import('../../src/dev/tui/background')
+    const raw: boolean[] = []
+    const stdin = {
+      isTTY: true,
+      isRaw: false,
+      setRawMode: (value: boolean) => raw.push(value),
+      isPaused: () => false,
+      resume: () => {},
+      pause: () => {},
+      unshift: () => {},
+      on: () => {},
+      off: () => {},
+    }
+    // A terminal that never answers, so stdin is held until the timeout.
+    const answer = queryBackground({
+      write: () => {},
+      stdin,
+      stdout: { isTTY: true },
+      env: { TERM: 'xterm-256color' },
+      timeout: 20,
+      ci: false,
+      test: false,
+    })
+
+    const seen = await clock.withUserAttention(async () => [...raw])
+
+    expect(seen).toEqual([true, false])
+    await expect(answer).resolves.toBe('unknown')
+  })
+
+  it('should only let the question run once a stdin query has been answered', async () => {
+    const { holdStdin } = await import('../../src/utils/stdin')
+    const { registerTerminalHost } = await import('../../src/utils/terminal-host')
+    const borrowed: string[] = []
+    const release = holdStdin()
+    const removeHost = registerTerminalHost({
+      version: 1,
+      startTask: () => ({
+        update: () => {},
+        stop: () => {},
+      }),
+      withTerminal: async (work) => {
+        borrowed.push('suspend')
+        try {
+          return await work()
+        }
+        finally {
+          borrowed.push('restore')
+        }
+      },
+    })
+    const work = vi.fn(async () => {})
+
+    try {
+      const asked = clock.withUserAttention(work)
+      await Promise.resolve()
+      expect(borrowed).toEqual(['suspend'])
+      expect(work).not.toHaveBeenCalled()
+
+      release()
+      await asked
+      expect(borrowed).toEqual(['suspend', 'restore'])
+      expect(work).toHaveBeenCalledOnce()
+    }
+    finally {
+      release()
+      removeHost()
+    }
+  })
 })

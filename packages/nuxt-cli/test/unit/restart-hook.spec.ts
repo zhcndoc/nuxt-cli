@@ -61,7 +61,23 @@ describe('restart hook', () => {
     expect(callback).not.toHaveBeenCalled()
 
     onError!(new Error('boom'))
-    expect(callback).toHaveBeenCalledWith({ type: 'error', message: expect.stringContaining('boom') })
+    expect(callback).toHaveBeenCalledWith({
+      type: 'error',
+      message: expect.stringContaining('boom'),
+    })
+  })
+
+  it('should restart without the message when the diagnostic was already reported', () => {
+    const source = new EventEmitter()
+    const callback = vi.fn()
+    arm(source, callback)
+
+    const error = new Error('already printed')
+    Object.defineProperty(error, Symbol.for('nuxt.diagnostic.reported'), { value: true })
+    const [onError] = [...installed]
+    onError!(error)
+
+    expect(callback).toHaveBeenCalledWith({ type: 'error', message: '' })
   })
 
   it('should not stack listeners when re-armed', () => {
@@ -140,5 +156,17 @@ describe('rejection handler', () => {
 
     expect(report).not.toHaveBeenCalled()
     expect(stop).not.toHaveBeenCalled()
+  })
+
+  it('should report an empty message and stop when the rejection was already reported', () => {
+    const report = vi.fn()
+    const stop = vi.fn()
+    const error = new Error('already printed')
+    Object.defineProperty(error, Symbol.for('nuxt.diagnostic.reported'), { value: true })
+
+    createRejectionHandler(report, stop)(error)
+
+    expect(report).toHaveBeenCalledExactlyOnceWith('')
+    expect(stop).toHaveBeenCalledTimes(1)
   })
 })

@@ -1,5 +1,5 @@
 import type { ErrorReport } from 'my-bad'
-import type { BuildProgress, Channel, LogEntry, LogLevel } from 'my-bad/channel'
+import type { BuildProgress, Channel, LogEntry, LogLevel, ProblemMeta } from 'my-bad/channel'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import type { ProgressSnapshot } from '../utils/progress-snapshot'
@@ -8,6 +8,7 @@ import process from 'node:process'
 
 import { isAbsolute, join, relative } from 'pathe'
 
+import { stripControlChars } from '../utils/formatting'
 import { debug } from '../utils/logger'
 import { openBroadcast } from './broadcast'
 import { isLoopbackAddress } from './host-check'
@@ -25,10 +26,15 @@ export const ERROR_BROADCAST_CHANNEL = 'nuxt:dev:error'
 /** Reports the app forwards; anything else on the wire is ignored. */
 export type DevErrorMessage
   = | { type: 'nuxt:dev:error:report', report: ErrorReport, requestId?: string, request?: string }
-    | { type: 'nuxt:dev:error:clear', id?: string }
+    | { type: 'nuxt:dev:error:clear', id?: string, requestId?: string, request?: string }
     | { type: 'nuxt:dev:error:warning', report: ErrorReport }
+    | { type: 'nuxt:dev:error:warning:clear', id?: string }
     | { type: 'nuxt:dev:error:log', entry: LogEntry }
     | { type: 'nuxt:dev:error:progress', progress: BuildProgress }
+    | { type: 'nuxt:dev:error:problems', source: string, reports: ErrorReport[], meta?: ProblemMeta }
+    | { type: 'nuxt:dev:error:problems:clear', source?: string }
+    /** Whether the app registered a my-bad dock with Vite DevTools. */
+    | { type: 'nuxt:dev:error:devtools', registered: boolean }
 
 /** Asks whoever holds a current report to post it again. */
 const SYNC_MESSAGE = { type: 'nuxt:dev:error:sync' } as const
@@ -64,8 +70,8 @@ export function useErrorChannel(options: ErrorChannelOptions = {}): Promise<Chan
       // Opening a file spawns an editor, so confine that to the project, which
       // is not `process.cwd()` when `nuxt dev` was pointed elsewhere.
       root: options.cwd || process.cwd(),
-      // The dev server's own `Host` check has already run, and knows what
-      // `--host` allowed.
+      // The dev server's own `Host` check, which covers `--host` and
+      // `vite.server.allowedHosts`, has already run.
       allowedHosts: true,
       sink: await resolveSink(options),
     }))
@@ -101,7 +107,9 @@ export function resolveChannelPath(value: unknown): string | undefined {
     return undefined
   }
   const path = value.replace(/\/+$/, '')
-  return path.startsWith('/') && path.length > 1 ? path : undefined
+  return path.startsWith('/') && path.length > 1
+    ? path
+    : undefined
 }
 
 /** Whether `path` is served by the channel mounted at `base`. */
@@ -116,7 +124,9 @@ export function isLocalPeer(req: IncomingMessage): boolean {
 
 export async function handleErrorChannelRequest(req: IncomingMessage, res: ServerResponse, options: ErrorChannelOptions = {}): Promise<void> {
   const instance = await useErrorChannel(options)
-  if (await instance.handler(req, res, { trusted: isLocalPeer(req) })) {
+  if (await instance.handler(req, res, {
+    trusted: isLocalPeer(req),
+  })) {
     return
   }
   res.statusCode = 404
@@ -127,6 +137,8 @@ export async function handleErrorChannelRequest(req: IncomingMessage, res: Serve
 
 export interface CreateReportOptions {
   cwd?: string
+  /** Workspace root, when the project sits inside a monorepo. */
+  workspaceDir?: string
   /** Request the error was raised for, shown as the report's request section. */
   req?: IncomingMessage
 }
@@ -141,11 +153,21 @@ export async function createCliReport(error: unknown, options: CreateReportOptio
     import('my-bad'),
     import('my-bad/presets'),
   ])
+  const cwd = options.cwd || process.cwd()
+  const roots = [
+    ...new Set([cwd, options.workspaceDir].filter((root): root is string => typeof root === 'string')),
+  ]
   return createReport(error, {
-    cwd: options.cwd || process.cwd(),
-    loaders: [fsLoader()],
-    presets: [nuxtPreset()],
-    context: options.req ? { req: options.req } : undefined,
+    cwd,
+    loaders: [
+      fsLoader({ roots }),
+    ],
+    presets: [
+      nuxtPreset(),
+    ],
+    context: options.req
+      ? { req: options.req }
+      : undefined,
   })
 }
 
@@ -174,7 +196,9 @@ const APP_PROGRESS_SOURCE = 'app'
 export function toBuildProgress(snapshot: ProgressSnapshot): BuildProgress {
   return {
     phase: snapshot.phase,
-    percent: snapshot.status === 'error' ? undefined : Math.round(snapshot.progress * 100),
+    percent: snapshot.status === 'error'
+      ? undefined
+      : Math.round(snapshot.progress * 100),
     message: snapshot.message,
     source: CLI_PROGRESS_SOURCE,
   }
@@ -212,10 +236,33 @@ export function isDevErrorMessage(message: unknown): message is DevErrorMessage 
   if (type === 'nuxt:dev:error:progress') {
     return isBuildProgress((message as { progress?: unknown }).progress)
   }
-  return type === 'nuxt:dev:error:report' || type === 'nuxt:dev:error:clear' || type === 'nuxt:dev:error:warning'
+  if (type === 'nuxt:dev:error:problems') {
+    const { source, reports } = message as { source?: unknown, reports?: unknown }
+    return typeof source === 'string' && Array.isArray(reports)
+  }
+  if (type === 'nuxt:dev:error:problems:clear') {
+    const { source } = message as { source?: unknown }
+    return source === undefined || typeof source === 'string'
+  }
+  if (type === 'nuxt:dev:error:clear') {
+    const { requestId } = message as { requestId?: unknown }
+    return requestId === undefined || typeof requestId === 'string'
+  }
+  if (type === 'nuxt:dev:error:devtools') {
+    return typeof (message as { registered?: unknown }).registered === 'boolean'
+  }
+  return type === 'nuxt:dev:error:report' || type === 'nuxt:dev:error:warning' || type === 'nuxt:dev:error:warning:clear'
 }
 
-const LOG_LEVELS = new Set<string>(['trace', 'debug', 'info', 'log', 'warn', 'error', 'fatal'] satisfies LogLevel[])
+const LOG_LEVELS = new Set<string>([
+  'trace',
+  'debug',
+  'info',
+  'log',
+  'warn',
+  'error',
+  'fatal',
+] satisfies LogLevel[])
 
 /** Whether `entry` is a log the channel's drawer can show. */
 function isLogEntry(entry: unknown): entry is LogEntry {
@@ -242,9 +289,9 @@ function isBuildProgress(progress: unknown): progress is BuildProgress {
 }
 
 /**
- * A report as it crosses to the supervisor: the rendering to show it with, plus
- * enough to summarise it on a status line. The report itself stays in the
- * channel, which serves it from `/history/<id>`.
+ * A report as it crosses to the supervisor: the rendering to show it with,
+ * enough to summarise it on a status line, and the report itself so it can be
+ * laid out again for another width.
  */
 export interface DevReportSummary {
   id: string
@@ -261,6 +308,9 @@ export interface DevReportSummary {
   request?: string
   /** The report rendered for a terminal. */
   ansi: string
+  report?: ErrorReport
+  /** The `cwd` paths in `ansi` are relative to. */
+  cwd?: string
 }
 
 /** The compile error a report was caused by, when there is one. */
@@ -282,30 +332,39 @@ export interface ReportContext {
   request?: string
 }
 
-/** Everything the supervisor needs to present `report`, rendered for a terminal. */
+/**
+ * Everything the supervisor needs to present `report`, rendered for a terminal.
+ * Text fields are stripped of control characters, since the app may have built the report.
+ */
 export async function summariseReport(report: ErrorReport, context: ReportContext = {}, cwd: string = process.cwd()): Promise<DevReportSummary> {
   const { renderAnsi } = await import('my-bad')
   // A request that hit a compile error is described by the compile error.
   const named = findCompileReport(report) ?? report
-  const frames = named.frames.some(frame => frame.file) ? named.frames : report.frames
+  const frames = named.frames.some(frame => frame.file)
+    ? named.frames
+    : report.frames
   const frame = frames.find(frame => frame.type === 'app' && frame.file) ?? frames.find(frame => frame.file)
   return {
     id: report.id,
-    name: named.name,
-    message: named.message,
+    name: stripControlChars(named.name),
+    message: stripControlChars(named.message),
     file: frame?.file,
     line: frame?.line,
-    location: frame?.file && formatLocation(frame.file, frame.line, frame.column, cwd),
+    location: frame?.file && stripControlChars(formatLocation(frame.file, frame.line, frame.column, cwd)),
     requestId: context.requestId,
-    request: context.request,
+    request: context.request && stripControlChars(context.request),
     ansi: renderAnsi(report, { cwd }),
+    report,
+    cwd,
   }
 }
 
 /** `file:line:column`, relative to the project where it sits inside it. */
 function formatLocation(file: string, line: number | undefined, column: number | undefined, cwd: string): string {
   const relativePath = relative(cwd, file)
-  const path = !relativePath || relativePath.startsWith('..') || isAbsolute(relativePath) ? file : `./${relativePath}`
+  const path = !relativePath || relativePath.startsWith('..') || isAbsolute(relativePath)
+    ? file
+    : `./${relativePath}`
   return [path, line, column].filter(part => part !== undefined).join(':')
 }
 
@@ -316,8 +375,12 @@ export function formatReportForTerminal(report: DevReportSummary): string {
     return body
   }
   const separator = report.request.indexOf(' ')
-  const method = separator === -1 ? report.request : report.request.slice(0, separator)
-  const path = separator === -1 ? '' : ` ${report.request.slice(separator + 1)}`
+  const method = separator === -1
+    ? report.request
+    : report.request.slice(0, separator)
+  const path = separator === -1
+    ? ''
+    : ` ${report.request.slice(separator + 1)}`
   return `[request error] [${method}]${path}\n\n  ${body.replaceAll('\n', '\n  ')}`
 }
 
@@ -352,12 +415,40 @@ export function openErrorBridge(handlers: ErrorBridgeHandlers = {}, options: Err
           instance.progress({ ...message.progress, source: message.progress.source ?? APP_PROGRESS_SOURCE })
           break
         }
+        case 'nuxt:dev:error:problems': {
+          instance.setProblems(message.source, message.reports, message.meta)
+          break
+        }
+        case 'nuxt:dev:error:problems:clear': {
+          instance.clearProblems(message.source)
+          break
+        }
+        case 'nuxt:dev:error:devtools': {
+          instance.setDevTools(message.registered)
+          break
+        }
         case 'nuxt:dev:error:warning': {
           instance.warn(message.report)
           break
         }
+        case 'nuxt:dev:error:warning:clear': {
+          instance.clearWarning(message.id)
+          break
+        }
         case 'nuxt:dev:error:clear': {
-          instance.clearError(message.id)
+          if (message.requestId !== undefined || message.request !== undefined) {
+            instance.clearError(message.id, {
+              ...(message.requestId !== undefined
+                ? { requestId: message.requestId }
+                : {}),
+              ...(message.request !== undefined
+                ? { request: message.request }
+                : {}),
+            })
+          }
+          else {
+            instance.clearError(message.id)
+          }
           handlers.onClear?.(message.id)
           break
         }

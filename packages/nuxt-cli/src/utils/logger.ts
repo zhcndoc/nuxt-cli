@@ -30,7 +30,9 @@ const plain: LoggerImpl = {
 }
 
 function defaultImpl(): LoggerImpl {
-  return !process.stdout.isTTY || isCI ? plain : log
+  return !process.stdout.isTTY || isCI
+    ? plain
+    : log
 }
 
 let impl: LoggerImpl | undefined
@@ -67,11 +69,11 @@ export function setLoggerImpl(next?: LoggerImpl): void {
 }
 
 export const logger: LoggerImpl = {
-  info: message => emit(() => (impl ?? defaultImpl()).info(message)),
-  warn: message => emit(() => (impl ?? defaultImpl()).warn(message)),
-  error: message => emit(() => (impl ?? defaultImpl()).error(message)),
-  success: message => emit(() => (impl ?? defaultImpl()).success(message)),
-  step: message => emit(() => (impl ?? defaultImpl()).step(message)),
+  info: (message, options) => emit(() => (impl ?? defaultImpl()).info(message, options)),
+  warn: (message, options) => emit(() => (impl ?? defaultImpl()).warn(message, options)),
+  error: (message, options) => emit(() => (impl ?? defaultImpl()).error(message, options)),
+  success: (message, options) => emit(() => (impl ?? defaultImpl()).success(message, options)),
+  step: (message, options) => emit(() => (impl ?? defaultImpl()).step(message, options)),
   message: (message, options) => emit(() => (impl ?? defaultImpl()).message(message, options)),
 }
 
@@ -90,10 +92,16 @@ export function intro(message: string): void {
 /** {@link intro}, for the line a command finishes on. */
 export function outro(message: string): void {
   if (!process.stdout.isTTY || isCI) {
-    writeDirect(`${styleText('green', S_SUCCESS)} ${message}\n`)
+    writeDirect(`${styleText('green', S_SUCCESS)} ${message.replace(/\n/g, '\n  ')}\n`)
     return
   }
-  clackOutro(message)
+  // Clack leaves the lines after the first unindented; line them up with it.
+  message = message.replace(/\n/g, '\n   ')
+  // Nuxt 4 calls `consola.wrapAll()` while building, which trims each chunk
+  // written to stdout and would drop the blank line clack ends the outro with.
+  clackOutro(message, {
+    output: { write: writeDirect } as unknown as NodeJS.WriteStream,
+  })
 }
 
 export const debug = createDebug('nuxi')
@@ -111,6 +119,8 @@ export const debug = createDebug('nuxi')
  * the leading gap is measured rather than assumed.
  */
 export function writeNotice(headline: string, instruction?: string): void {
-  const body = instruction ? `${headline}\n  ${instruction}\n` : `${headline}\n`
+  const body = instruction
+    ? `${headline}\n  ${instruction}\n`
+    : `${headline}\n`
   writeDirect(`${blankLineBefore()}${styleText('blue', S_INFO)} ${body}`)
 }

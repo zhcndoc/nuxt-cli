@@ -6,7 +6,7 @@ import type { DevRestartReason } from './reason'
 import type { DevReportSummary } from './error-channel'
 import type { ServerLogEvent } from './log-channel'
 import type { DevRequestSpan } from './span-channel'
-import type { DevRequestEvent, DevRoutes, NuxtDevContext, NuxtDevIPCMessage, NuxtParentIPCMessage } from './utils'
+import type { DevRequestEvent, DevRoutes, DevStack, NuxtDevContext, NuxtDevIPCMessage, NuxtParentIPCMessage } from './utils'
 
 import process from 'node:process'
 
@@ -16,9 +16,9 @@ import { formatWithOptions } from 'node:util'
 import { consola } from 'consola'
 import defu from 'defu'
 import { resolveDotenvFileNames } from '../utils/args'
-import { configureProjectConsola } from '../utils/console'
+import { configureProjectConsola, routeProcessWarnings } from '../utils/console'
 import { overrideEnv } from '../utils/env.ts'
-import { isRemotePeerError, KEEPS_PROCESS_ALIVE } from '../utils/errors'
+import { isRemotePeerError, isReportedError, KEEPS_PROCESS_ALIVE } from '../utils/errors'
 import { debug } from '../utils/logger'
 import { blankLineBefore, writeDirect } from '../utils/stdout'
 import { startCpuProfile, stopCpuProfile } from '../utils/profile.ts'
@@ -76,7 +76,12 @@ function createFeed<T>(limit: number) {
 }
 
 function formatErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.toString() : 'Unhandled Rejection'
+  if (isReportedError(error)) {
+    return ''
+  }
+  return error instanceof Error
+    ? error.toString()
+    : 'Unhandled Rejection'
 }
 
 /**
@@ -199,6 +204,7 @@ const ipc = new IPC()
 // over the log channel; `raw` is what lets the UI pair the two.
 if (ipc.enabled && process.env.__NUXT_DEV_PIPED_TTY__) {
   consola.options.formatOptions.date = false
+  routeProcessWarnings(consola)
   consola.wrapAll()
   consola.addReporter({
     log(logObj) {
@@ -242,6 +248,8 @@ interface InitializeReturn {
   onBuilding: (callback: (building: boolean) => void) => void
   /** Called whenever the app's routes are (re)discovered. */
   onRoutes: (callback: (routes: DevRoutes) => void) => void
+  /** Called with the builders the app uses, each time Nuxt loads. */
+  onStack: (callback: (stack: DevStack) => void) => void
   /** Called the first time a watched file changes, before Nuxt reloads. */
   onFileChange: (callback: () => void) => void
   onRestart: (callback: (reason?: DevRestartReason) => void) => void
@@ -254,9 +262,13 @@ export async function initialize(devContext: NuxtDevContext, ctx: InitializeOpti
 
   const profileArg = devContext.args.profile
   const profiling = profileArg !== undefined
-  const perfValue = profileArg === 'verbose' ? true : profiling ? 'quiet' : undefined
+  const perfValue = profileArg === 'verbose'
+    ? true
+    : profiling ? 'quiet' : undefined
   const perfOverrides = perfValue
-    ? { debug: { perf: perfValue } } as NuxtConfig
+    ? {
+        debug: { perf: perfValue },
+      } as NuxtConfig
     : {}
 
   if (profiling) {
@@ -264,18 +276,26 @@ export async function initialize(devContext: NuxtDevContext, ctx: InitializeOpti
   }
 
   // A piped fork captures for the parent's UI; otherwise the caller decides.
-  const captureUIEvents = ipc.enabled ? !!process.env.__NUXT_DEV_PIPED_TTY__ : !!ctx.captureUIEvents
+  const captureUIEvents = ipc.enabled
+    ? !!process.env.__NUXT_DEV_PIPED_TTY__
+    : !!ctx.captureUIEvents
 
   const devServer = new NuxtDevServer({
     cwd: devContext.cwd,
     overrides: defu(
       ctx.data?.overrides,
-      ({ extends: devContext.args.extends } satisfies NuxtConfig) as NuxtConfig,
+      // defu lets an empty array win over a string `extends` from nuxt.config, which drops the layer
+      (devContext.args.extends?.length
+        ? { extends: devContext.args.extends } satisfies NuxtConfig
+        : {}) as NuxtConfig,
       perfOverrides,
     ),
     logLevel: devContext.args.logLevel as 'silent' | 'info' | 'verbose',
     clear: devContext.args.clear,
-    dotenv: { cwd: devContext.cwd, fileName: resolveDotenvFileNames(devContext.args.dotenv) },
+    dotenv: {
+      cwd: devContext.cwd,
+      fileName: resolveDotenvFileNames(devContext.args.dotenv),
+    },
     envName: devContext.args.envName,
     showBanner: ctx.showBanner !== false && !ipc.enabled,
     listenOverrides: ctx.listenOverrides,
@@ -293,7 +313,9 @@ export async function initialize(devContext: NuxtDevContext, ctx: InitializeOpti
           message: _error.message,
           stack: _error.stack,
           name: _error.name,
-          code: 'code' in _error ? _error.code : undefined,
+          code: 'code' in _error
+            ? _error.code
+            : undefined,
         },
       })
     })
@@ -317,6 +339,7 @@ export async function initialize(devContext: NuxtDevContext, ctx: InitializeOpti
   const requests = createFeed<DevRequestEvent[]>(PENDING_REQUEST_BATCHES)
   const spans = createFeed<DevRequestSpan[]>(PENDING_REQUEST_BATCHES)
   const routes = createFeed<DevRoutes>(1)
+  const stack = createFeed<DevStack>(1)
   const building = createFeed<boolean>(0)
   const reports = createFeed<DevReportSummary>(PENDING_REPORTS)
   const reportsCleared = createFeed<string | undefined>(0)
@@ -387,6 +410,14 @@ export async function initialize(devContext: NuxtDevContext, ctx: InitializeOpti
       building.emit(value)
     })
 
+    devServer.on('stack', (payload) => {
+      if (ipc.enabled) {
+        ipc.send({ type: 'nuxt:internal:dev:stack', payload })
+        return
+      }
+      stack.emit(payload)
+    })
+
     devServer.on('routes', (payload) => {
       if (ipc.enabled) {
         ipc.send({ type: 'nuxt:internal:dev:routes', payload })
@@ -400,7 +431,9 @@ export async function initialize(devContext: NuxtDevContext, ctx: InitializeOpti
     if (ipc.enabled) {
       let reported: string | undefined
       devServer.progress.onUpdate(({ status, pending, serving }) => {
-        const rendering = status === 'ready' ? pending : undefined
+        const rendering = status === 'ready'
+          ? pending
+          : undefined
         if (rendering?.label === reported) {
           return
         }
@@ -548,6 +581,7 @@ export async function initialize(devContext: NuxtDevContext, ctx: InitializeOpti
     onReport: reports.subscribe,
     onReportClear: reportsCleared.subscribe,
     onRoutes: routes.subscribe,
+    onStack: stack.subscribe,
     onFileChange: (callback: () => void) => {
       devServer.once('change', callback)
     },
@@ -590,7 +624,10 @@ export function createRestartHook(source: RestartSource): (callback: (reason?: D
       debug('Ignoring remote peer error:', error)
       return
     }
-    restart({ type: 'error', message: formatErrorMessage(error) })
+    restart({
+      type: 'error',
+      message: formatErrorMessage(error),
+    })
   }
   restartOnError[KEEPS_PROCESS_ALIVE] = true
 

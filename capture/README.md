@@ -32,7 +32,7 @@ The first time you run this, it will copy `capture/fixture/` into a work directo
 
 ## Scenarios
 
-Defined in `captures.config.ts`, currently: `nuxt-dev`, `nuxt-dev-static`, `nuxt-dev-restart`, `nuxt-dev-install-module` (interactive dev UI, pinned with `NUXT_TUI=1`), `nuxt-dev-plain`, `nuxt-dev-plain-static`, `nuxt-dev-plain-restart` (classic log output, pinned with `NUXT_TUI=plain`), `nuxt-init`, `nuxt-curl`, `nuxt-task-list`, `nuxt-module-search`.
+Defined in `captures.config.ts`, currently: `nuxt-dev`, `nuxt-dev-static`, `nuxt-dev-restart`, `nuxt-dev-install-module`, `nuxt-dev-logs` (interactive dev UI, pinned with `NUXT_TUI=1`), `nuxt-dev-plain`, `nuxt-dev-plain-static`, `nuxt-dev-plain-restart` (classic log output, pinned with `NUXT_TUI=plain`), `nuxt-init`, `nuxt-curl`, `nuxt-task-list`, `nuxt-module-search`.
 
 Dev captures pin the UI mode explicitly because the dev UI otherwise decides based on the environment (CI, test, terminal size), which would make recordings machine-dependent.
 
@@ -41,6 +41,8 @@ A scenario is a command plus an optional `drive` function that types into the se
 ## Scrubbing
 
 Each SVG is scrubbed of ports, LAN addresses, home and temporary directories, and (for dev scenarios) the QR code. Each capture's `<desc>` records which rules were applied.
+
+是否用新录制替换已提交的 SVG，由对应的 `.txt` 指纹决定；指纹还会固定版本、耗时、日期和加载动画阶段。场景可通过 `fingerprint` 添加仅用于指纹计算的规则；`nuxt-dev-logs` 使用 `clock`，因为哪些日志行会显示时间取决于秒数落在哪一行。
 
 ## Stubbed APIs
 

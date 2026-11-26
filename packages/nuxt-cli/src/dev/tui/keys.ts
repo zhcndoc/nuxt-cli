@@ -1,8 +1,10 @@
+import type { MouseReport } from './terminal-replies'
+
 import process from 'node:process'
 import { emitKeypressEvents } from 'node:readline'
 
 import { guardReplayedInput } from '../../utils/console'
-import { whenStdinReleased } from './background'
+import { whenStdinReleased } from '../../utils/stdin'
 import { filterTerminalReplies } from './terminal-replies'
 
 export interface Key {
@@ -17,7 +19,7 @@ export interface Key {
  * Deliver raw keypresses, excluding terminal replies. The handler owns Ctrl-C.
  * Set `ignoreBufferedInput` when returning from a prompt.
  */
-export function attachKeys(onKey: (key: Key) => void, { ignoreBufferedInput = false }: { ignoreBufferedInput?: boolean } = {}): () => void {
+export function attachKeys(onKey: (key: Key) => void, { ignoreBufferedInput = false, onMouse }: { ignoreBufferedInput?: boolean, onMouse?: (report: MouseReport) => void } = {}): () => void {
   let release: (() => void) | undefined
   let detached = false
 
@@ -29,8 +31,10 @@ export function attachKeys(onKey: (key: Key) => void, { ignoreBufferedInput = fa
     const wasRaw = stdin.isRaw
     stdin.setRawMode(true)
 
-    const replies = filterTerminalReplies(stdin)
-    const isReplayedInput = ignoreBufferedInput ? guardReplayedInput() : () => false
+    const isReplayedInput = ignoreBufferedInput
+      ? guardReplayedInput()
+      : () => false
+    const replies = filterTerminalReplies(stdin, report => !isReplayedInput() && onMouse?.(report))
 
     emitKeypressEvents(stdin)
     stdin.resume()

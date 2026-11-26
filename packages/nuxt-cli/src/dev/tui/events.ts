@@ -20,6 +20,8 @@ export interface DevLogEvent {
   rendered?: string
   /** The message carries its own colours, so severity styling must not be applied. */
   styled?: boolean
+  /** The message laid out for `columns`, for a message its producer wraps to a width. */
+  format?: (columns: number) => string
   /**
    * Arrivals by each route. One occurrence is one arrival from each, so a log
    * heard three ways is one entry and two logs that say the same thing stay
@@ -116,7 +118,9 @@ function sameMessage(a: string, b: string): boolean {
 function errorSignature(message: string): string | undefined {
   const first = stripAnsi(message).split('\n', 1)[0]!.replace(/^\s*\[[^\]]+\]\s*/, '').replace(/^\s*(?:internal server error|pre-transform error|transform failed|error|fatal)\s*:\s*/i, '').replace(/^\s*\S+ — /, '').replace(/[`\s]+/g, ' ').trim()
   // Too short a remainder is generic enough to pair unrelated problems.
-  return first.length >= 10 ? first.toLowerCase() : undefined
+  return first.length >= 10
+    ? first.toLowerCase()
+    : undefined
 }
 
 /**
@@ -139,7 +143,9 @@ function classify(event: DevLogEvent): DevLogEvent {
   for (const { pattern, level, type } of BADGES) {
     const match = plain.match(pattern)
     if (match) {
-      const message = plain === event.message ? event.message.slice(match[0].length) : event.message
+      const message = plain === event.message
+        ? event.message.slice(match[0].length)
+        : event.message
       return { ...event, level, type, message }
     }
   }
@@ -229,7 +235,9 @@ export class DevEventLog {
     }
     const stored = classify(event)
     if (route) {
-      stored.routes = new Map([[route, 1]])
+      stored.routes = new Map([
+        [route, 1],
+      ])
     }
     const deduped = this.#dedupe(stored)
     if (deduped) {
@@ -253,7 +261,9 @@ export class DevEventLog {
    * pipe, so the two cannot be paired by ordering alone.
    */
   attachRendered(logs: PrintedLog[], owner?: DevLogEvent): PrintedLog[] {
-    const event = owner ?? (logs.length ? this.#awaitingOutput(logs.map(log => log.message).join('\n')) : undefined)
+    const event = owner ?? (logs.length
+      ? this.#awaitingOutput(logs.map(log => log.message).join('\n'))
+      : undefined)
     const span = event && printedSpan(logs, event.message)
     if (!event || !span) {
       return logs
@@ -261,7 +271,10 @@ export class DevEventLog {
     const [start, end] = span
     event.rendered ??= logs.slice(start, end + 1).map(log => log.rendered).join('')
     noteRoute(event, 'output')
-    return [...this.attachRendered(logs.slice(0, start)), ...this.attachRendered(logs.slice(end + 1))]
+    return [
+      ...this.attachRendered(logs.slice(0, start)),
+      ...this.attachRendered(logs.slice(end + 1)),
+    ]
   }
 
   #awaitingOutput(plain: string, withinMs = 500): DevLogEvent | undefined {
@@ -359,6 +372,8 @@ export class DevEventLog {
       if (normaliseMessage(candidate.message).length < normaliseMessage(event.message).length) {
         candidate.message = event.message
         candidate.rendered = event.rendered ?? candidate.rendered
+        candidate.format = event.format
+        candidate.styled = event.styled
       }
       candidate.requestId ??= event.requestId
       candidate.request ??= event.request
@@ -399,7 +414,9 @@ export class DevEventLog {
   }
 
   recent(count: number, filter?: (event: DevLogEvent) => boolean): DevLogEvent[] {
-    const source = filter ? this.#events.filter(filter) : this.#events
+    const source = filter
+      ? this.#events.filter(filter)
+      : this.#events
     return source.slice(-count)
   }
 

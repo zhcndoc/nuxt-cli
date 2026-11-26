@@ -1,4 +1,3 @@
-import type { Buffer } from 'node:buffer'
 import type { ChildProcess } from 'node:child_process'
 import { spawn } from 'node:child_process'
 import process from 'node:process'
@@ -39,9 +38,23 @@ export interface PtySession {
 function ptyHost(shellLine: string): { command: string, args: string[], env: Record<string, string> } {
   if (process.platform === 'darwin' || process.env.CAPTURE_FORCE_SHIM === '1') {
     const shim = fileURLToPath(new URL('pty-host.py', import.meta.url))
-    return { command: 'python3', args: [shim], env: { CAPTURE_CMD: shellLine } }
+    return {
+      command: 'python3',
+      args: [shim],
+      env: { CAPTURE_CMD: shellLine },
+    }
   }
-  return { command: 'script', args: ['-q', '-e', '-c', shellLine, '/dev/null'], env: {} }
+  return {
+    command: 'script',
+    args: [
+      '-q',
+      '-e',
+      '-c',
+      shellLine,
+      '/dev/null',
+    ],
+    env: {},
+  }
 }
 
 /**
@@ -60,7 +73,14 @@ export function record(command: string, options: PtyOptions): PtySession {
   // pipe, flipping them to consola's fancy reporter (right-aligned timestamps
   // and all) when a real run re-emits their plain output through the parent.
   // CI (set on Actions runners) is dropped for the inverse reason.
-  const env = { ...process.env, ...options.env, ...host.env, TERM: 'xterm-256color', COLUMNS: String(options.columns), LINES: String(options.rows) } as NodeJS.ProcessEnv
+  const env = {
+    ...process.env,
+    ...options.env,
+    ...host.env,
+    TERM: 'xterm-256color',
+    COLUMNS: String(options.columns),
+    LINES: String(options.rows),
+  } as NodeJS.ProcessEnv
   delete env.FORCE_COLOR
   delete env.NO_COLOR
   delete env.CI
@@ -81,8 +101,8 @@ export function record(command: string, options: PtyOptions): PtySession {
     stdio: ['pipe', 'pipe', 'pipe'],
   })
 
-  child.stdout!.on('data', (chunk: Buffer) => {
-    const data = chunk.toString()
+  child.stdout!.setEncoding('utf8')
+  child.stdout!.on('data', (data: string) => {
     chunks.push({ at: performance.now() - started, data })
     buffer += data
     for (let i = waiters.length - 1; i >= 0; i--) {
@@ -93,8 +113,9 @@ export function record(command: string, options: PtyOptions): PtySession {
   })
 
   let stderr = ''
-  child.stderr!.on('data', (chunk: Buffer) => {
-    stderr += chunk.toString()
+  child.stderr!.setEncoding('utf8')
+  child.stderr!.on('data', (data: string) => {
+    stderr += data
   })
 
   const exited = new Promise<number | null>((resolve) => {

@@ -1,7 +1,7 @@
 import type { DevRoute, DevRoutes } from '../utils'
 import type { Key } from './keys'
 
-import type { OverlayEntry } from './screen'
+import type { OverlayEntry, OverlayHint } from './screen'
 import { relative } from 'node:path'
 
 import { styleText } from 'node:util'
@@ -11,7 +11,7 @@ import { link } from 'clickable-path'
 import { truncate } from '../../utils/formatting'
 
 import { MUTED } from '../../utils/terminal-theme'
-import { formatHints, ScreenOverlay } from './screen'
+import { ScreenOverlay } from './screen'
 
 type RouteFilter = 'all' | 'page' | 'server'
 
@@ -85,33 +85,59 @@ export class RouteOverlay extends ScreenOverlay {
     const pages = this.#routes.filter(route => route.kind === 'page').length
     const server = this.#routes.length - pages
     const counts = styleText(MUTED, `${pages} pages · ${server} server`)
-    const label = this.#filter === 'all' ? 'all' : `${this.#filter} only`
+    const label = this.#filter === 'all'
+      ? 'all'
+      : `${this.#filter} only`
     return ` ${styleText('bold', 'routes')} · ${label} · ${counts}${this.renderPosition()}${this.renderSearch()}`
   }
 
   protected renderEntries(columns: number): OverlayEntry[] {
     const matching = this.#matching()
     if (!matching.length) {
-      return [{ lines: [styleText(MUTED, this.#routes.length ? 'no routes match this filter' : 'waiting for routes…')] }]
+      return [
+        {
+          lines: [
+            styleText(MUTED, this.#routes.length ? 'no routes match this filter' : 'waiting for routes…'),
+          ],
+        },
+      ]
     }
     const width = Math.min(50, Math.max(...matching.map(route => route.route.length)) + 2)
     return matching.map(route => ({
-      lines: [this.#formatRoute(route, width, columns)],
-      copy: route.file ? relative(this.#cwd, route.file) : route.route,
+      // Routes are reported afresh on every reload, so the objects do not last.
+      key: `${route.kind} ${route.method ?? ''} ${route.route} ${route.file ?? ''}`,
+      lines: [
+        this.#formatRoute(route, width, columns),
+      ],
+      copy: route.file
+        ? relative(this.#cwd, route.file)
+        : route.route,
     }))
   }
 
-  protected renderHints(columns: number): string {
-    return formatHints([
+  protected hints(): OverlayHint[] {
+    return [
       ['↑/↓', 'select'],
-      ['w', 'pages'],
-      ['s', 'server'],
-      ['a', 'all'],
+      [
+        'w',
+        'pages',
+        { active: this.#filter === 'page' },
+      ],
+      [
+        's',
+        'server',
+        { active: this.#filter === 'server' },
+      ],
+      [
+        'a',
+        'all',
+        { active: this.#filter === 'all' },
+      ],
       ['/', 'search'],
       ['y', 'copy'],
       ['Y', 'copy all'],
       ['q', 'close'],
-    ], columns)
+    ]
   }
 
   #formatRoute(route: DevRoute, width: number, columns: number): string {
@@ -119,11 +145,22 @@ export class RouteOverlay extends ScreenOverlay {
       ? styleText('cyan', 'page  ')
       : styleText('magenta', (route.method?.toUpperCase() ?? 'any').padEnd(6))
     const path = route.route.padEnd(width)
-    const file = route.file ? relative(this.#cwd, route.file) : ''
+    const file = route.file
+      ? relative(this.#cwd, route.file)
+      : ''
     // The tail of a path identifies it; the head is the part every row shares.
     const room = columns - width - 10
-    const label = room < 8 ? '' : file.length > room ? `…${file.slice(1 - room)}` : file
-    const target = label && route.file ? link(route.file, { cwd: this.#cwd, formatter: () => label }) : label
+    const label = room < 8
+      ? ''
+      : file.length > room
+        ? `…${file.slice(1 - room)}`
+        : file
+    const target = label && route.file
+      ? link(route.file, {
+          cwd: this.#cwd,
+          formatter: () => label,
+        })
+      : label
     return truncate(`  ${kind} ${path} ${styleText(MUTED, target)}`, columns)
   }
 
@@ -132,11 +169,17 @@ export class RouteOverlay extends ScreenOverlay {
     return this.#routes
       .filter(route => this.#filter === 'all' || route.kind === this.#filter)
       .filter(route => !query || `${route.route} ${route.file ?? ''}`.toLowerCase().includes(query))
-      .sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'page' ? -1 : 1) || a.route.localeCompare(b.route))
+      .sort((a, b) => (a.kind === b.kind
+        ? 0
+        : a.kind === 'page'
+          ? -1
+          : 1) || a.route.localeCompare(b.route))
   }
 
   #setFilter(filter: RouteFilter): boolean {
-    this.#filter = this.#filter === filter ? 'all' : filter
+    this.#filter = this.#filter === filter
+      ? 'all'
+      : filter
     this.resetScroll()
     return true
   }

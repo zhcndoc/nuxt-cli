@@ -10,17 +10,23 @@ import { main } from '../../src/main'
 import { showUsage } from '../../src/run'
 
 async function resolve(def: Resolvable<CommandDef>): Promise<CommandDef> {
-  return typeof def === 'function' ? await def() : def
+  return typeof def === 'function'
+    ? await def()
+    : def
 }
 
 async function usage(def: Resolvable<CommandDef>, parent?: Resolvable<CommandDef>): Promise<string> {
-  const rendered = await renderUsage(await resolve(def), parent ? await resolve(parent) : undefined)
+  const rendered = await renderUsage(await resolve(def), parent
+    ? await resolve(parent)
+    : undefined)
   return rendered.replace(/v\d+\.\d+\.\d[^\s)]*/g, 'v0.0.0')
 }
 
 async function subCommand(parent: Resolvable<CommandDef>, name: string): Promise<CommandDef> {
   const resolved = await resolve(parent)
-  const subCommands = await (typeof resolved.subCommands === 'function' ? resolved.subCommands() : resolved.subCommands)
+  const subCommands = await (typeof resolved.subCommands === 'function'
+    ? resolved.subCommands()
+    : resolved.subCommands)
   return subCommands![name] as CommandDef
 }
 
@@ -141,6 +147,7 @@ describe('help', () => {
                                  --serve    Serve the analysis results (Default: true)                                                                       
                               --no-serve    Skip serving the analysis results                                                                                
                              --prerender    Prerender routes while analyzing (Default: false)                                                                
+                                  --json    Write the client and server bundle analysis as JSON instead of HTML (implies --no-serve) (Default: false)\x20\x20\x20\x20\x20\x20\x20\x20
       "
     `)
   })
@@ -334,13 +341,15 @@ describe('help', () => {
     expect(await usage(commands.module, main)).toMatchInlineSnapshot(`
       "Manage Nuxt modules (nuxt module v0.0.0)
 
-      USAGE nuxt module add|remove|search
+      USAGE nuxt module add|remove|search|build|prepare
 
       COMMANDS
 
-           add    Add Nuxt modules      
-        remove    Remove Nuxt modules   
-        search    Search in Nuxt modules
+            add    Add Nuxt modules\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20
+         remove    Remove Nuxt modules\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20
+         search    Search in Nuxt modules\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20
+          build    Build a module for publishing\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20
+        prepare    Prepare a module environment by writing types
 
       Use nuxt module <command> --help for more information about a command."
     `)
@@ -452,6 +461,8 @@ describe('help', () => {
                --checker=<vue-tsc|golar>    Type checker to use                                                                                              
                              -b, --build    Type-check in build mode, using TypeScript project references (detected automatically by default)                
                       --no-b, --no-build    Type-check without TypeScript project references                                                                 
+                           --incremental    Reuse type information from previous runs (Default: true)\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20
+                        --no-incremental    Type-check from scratch, without reusing type information from previous runs\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20
       "
     `)
   })
@@ -468,10 +479,10 @@ describe('help', () => {
 
       OPTIONS
 
-                                   --logLevel=<silent|info|verbose>    Specify build-time log level                       
-                                                           --dedupe    Dedupe dependencies after upgrading                
-                                                        -f, --force    Force upgrade to recreate lockfile and node_modules
-        -ch, --channel=<stable|nightly|v3|v4|v4-nightly|v3-nightly>    Specify a channel to install from (Default: stable)
+                                              --logLevel=<silent|info|verbose>    Specify build-time log level\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20
+                                                                      --dedupe    Dedupe dependencies after upgrading\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20
+                                                                   -f, --force    Force upgrade to recreate lockfile and node_modules
+        -ch, --channel=<stable|nightly|v3|v4|v3-nightly|v4-nightly|v5-nightly>    Specify a channel to install from (Default: stable)
       "
     `)
   })
@@ -544,7 +555,12 @@ describe('showUsage', () => {
     const hasColors = process.stdout.hasColors
     process.stdout.hasColors = () => false
     try {
-      await showUsage({ meta: { name: 'nuxt', description: styleText('bold', 'Nuxt CLI', { validateStream: false }) } })
+      await showUsage({
+        meta: {
+          name: 'nuxt',
+          description: styleText('bold', 'Nuxt CLI', { validateStream: false }),
+        },
+      })
       const output = String(write.mock.calls[0]![0])
       expect(output).toContain('Nuxt CLI')
       expect(output).not.toContain('\u001B[')

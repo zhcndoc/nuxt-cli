@@ -1,11 +1,11 @@
-import type { OverlayEntry } from './screen'
+import type { OverlayEntry, OverlayHint } from './screen'
 
 import { styleText } from 'node:util'
 
 import { stripAnsi, visibleWidth } from '../../utils/formatting'
 
 import { MUTED } from '../../utils/terminal-theme'
-import { formatHints, ScreenOverlay } from './screen'
+import { ScreenOverlay } from './screen'
 
 export interface InfoSection {
   heading: string
@@ -71,11 +71,15 @@ export class InfoOverlay extends ScreenOverlay {
     const width = Math.max(...sections.flatMap(({ entries }) => entries.map(([label]) => label.length)))
 
     const rows = sections.flatMap(({ heading, entries }, index) => [
-      ...index > 0 ? [''] : [],
+      ...index > 0
+        ? ['']
+        : [],
       `  ${styleText(['bold', 'underline'], heading)}`,
       ...entries
         .filter(([, value]) => !!value)
-        .map(([label, value, style]) => `  ${styleText(MUTED, label.padEnd(width))}  ${style ? styleText(style, value!) : colorize(value!)}`),
+        .map(([label, value, style]) => `  ${styleText(MUTED, label.padEnd(width))}  ${style
+          ? styleText(style, value!)
+          : colorize(value!)}`),
     ])
 
     return withSidePanel(rows, this.#panel(), columns).map(line => ({
@@ -84,13 +88,17 @@ export class InfoOverlay extends ScreenOverlay {
     }))
   }
 
-  protected renderHints(columns: number): string {
-    return formatHints([
+  protected hints(): OverlayHint[] {
+    return [
       ['↑/↓', 'select'],
       ['y', 'copy'],
-      ...this.#report ? [['Y', 'copy for an issue'] as [string, string]] : [],
+      ...this.#report
+        ? [
+['Y', 'copy for an issue'] satisfies OverlayHint,
+          ]
+        : [],
       ['q', 'close'],
-    ], columns)
+    ]
   }
 }
 
@@ -107,14 +115,22 @@ function withSidePanel(rows: string[], panel: string | undefined, columns: numbe
   const contentWidth = Math.max(...rows.map(line => visibleWidth(line)))
 
   if (columns < contentWidth + panelWidth + SIDE_PANEL_MIN_GAP) {
-    return [...rows, '', ...panelLines.map(line => `  ${line}`)]
+    return [
+      ...rows,
+      '',
+      ...panelLines.map(line => `  ${line}`),
+    ]
   }
 
   const gutter = contentWidth + 4
-  return Array.from({ length: Math.max(rows.length, panelLines.length) }, (_, index) => {
+  return Array.from({
+    length: Math.max(rows.length, panelLines.length),
+  }, (_, index) => {
     const left = rows[index] ?? ''
     const right = panelLines[index]
-    return right ? `${left}${' '.repeat(gutter - visibleWidth(left))}${right}` : left
+    return right
+      ? `${left}${' '.repeat(gutter - visibleWidth(left))}${right}`
+      : left
   })
 }
 
@@ -124,5 +140,7 @@ function colorize(value: string): string {
     return value
   }
   const match = VALUE_STYLES.find(({ pattern }) => pattern.test(value))
-  return match ? styleText(match.style, value) : value
+  return match
+    ? styleText(match.style, value)
+    : value
 }

@@ -1,3 +1,5 @@
+import type { LockInfo } from './lockfile'
+
 import { existsSync, readFileSync } from 'node:fs'
 import { isIP } from 'node:net'
 import { networkInterfaces } from 'node:os'
@@ -50,11 +52,27 @@ export async function resolveLockDir(cwd: string): Promise<string> {
  * `buildDir` may be passed when it is already known.
  */
 export async function findDevServer(cwd: string, buildDir?: string): Promise<RunningDevServer | undefined> {
-  const dir = buildDir ? resolve(cwd, buildDir) : await resolveLockDir(cwd)
+  const dir = buildDir
+    ? resolve(cwd, buildDir)
+    : await resolveLockDir(cwd)
 
   const lock = readActiveLock(dir)
   if (lock?.command === 'dev' && lock.url && isOwnAddress(lock.url)) {
-    return { url: toLoopback(lock.url), pid: lock.pid, cwd: lock.cwd }
+    return {
+      url: toLoopback(lock.url),
+      pid: lock.pid,
+      cwd: lock.cwd,
+    }
+  }
+}
+
+/**
+ * Where to open the app served by the server recorded in `lock`, on loopback
+ * and under its `app.baseURL`. Nothing for a lock that names another machine.
+ */
+export function lockAppURL(lock: LockInfo): string | undefined {
+  if (lock.url && isOwnAddress(lock.url)) {
+    return new URL(toLoopback(lock.url)).origin + (lock.baseURL || '/')
   }
 }
 
@@ -75,7 +93,9 @@ function isOwnAddress(url: string): boolean {
   if (isLocalHost(hostname)) {
     return true
   }
-  const address = hostname.startsWith('[') ? hostname.slice(1, -1) : hostname
+  const address = hostname.startsWith('[')
+    ? hostname.slice(1, -1)
+    : hostname
   if (!isIP(address)) {
     return false
   }
@@ -123,9 +143,14 @@ export interface NitroDevWorker {
  * both are internal to Nitro, so everything here is best-effort.
  */
 export async function findNitroDevWorker(cwd: string, buildDir?: string): Promise<NitroDevWorker | undefined> {
-  const dir = buildDir ? resolve(cwd, buildDir) : await resolveLockDir(cwd)
+  const dir = buildDir
+    ? resolve(cwd, buildDir)
+    : await resolveLockDir(cwd)
 
-  for (const path of [join(dir, 'nitro.json'), join(cwd, 'node_modules/.nitro/nitro.dev.json')]) {
+  for (const path of [
+    join(dir, 'nitro.json'),
+    join(cwd, 'node_modules/.nitro/nitro.dev.json'),
+  ]) {
     const dev = readBuildInfo(path)?.dev
     if (!dev?.pid || !dev.workerAddress || !isProcessAlive(dev.pid)) {
       continue
@@ -141,7 +166,16 @@ export async function findNitroDevWorker(cwd: string, buildDir?: string): Promis
   }
 }
 
-const LOCAL_HOSTS = new Set(['', 'localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0', '::', '[::]'])
+const LOCAL_HOSTS = new Set([
+  '',
+  'localhost',
+  '127.0.0.1',
+  '::1',
+  '[::1]',
+  '0.0.0.0',
+  '::',
+  '[::]',
+])
 
 /**
  * Whether an address recorded by Nitro belongs to this machine. The worker is
@@ -175,7 +209,9 @@ function readBuildInfo(path: string): NitroBuildInfo | undefined {
 async function configuredBuildDir(cwd: string): Promise<string | undefined> {
   try {
     const config = await getNuxtConfig(cwd)
-    return config.buildDir ? resolve(cwd, config.buildDir) : undefined
+    return config.buildDir
+      ? resolve(cwd, config.buildDir)
+      : undefined
   }
   catch {
     return undefined

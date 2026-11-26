@@ -10,6 +10,7 @@ import { commands } from './commands'
 import { globalCwdArgs } from './commands/_shared'
 import { main } from './main'
 import { warnOnHang } from './utils/hang'
+import { setRunningMain } from './utils/running-main'
 
 globalThis.__nuxt_cli__ = globalThis.__nuxt_cli__ || {
   // Programmatic usage fallback
@@ -23,7 +24,14 @@ globalThis.__nuxt_cli__ = globalThis.__nuxt_cli__ || {
 }
 
 // Commands that keep serving after their `run` resolves, so an alive process is expected.
-export const LONG_RUNNING_COMMANDS: Set<string> = new Set(['dev', '_dev', 'analyze', 'test', 'preview', 'start'])
+export const LONG_RUNNING_COMMANDS: Set<string> = new Set([
+  'dev',
+  '_dev',
+  'analyze',
+  'test',
+  'preview',
+  'start',
+])
 
 let currentCommand: string | undefined
 
@@ -37,10 +45,20 @@ export async function runMain(): Promise<void> {
     const { initCompletions } = await import('./completions')
     await initCompletions(main)
   }
-  await _runMain(main, { showUsage })
+  setRunningMain(true)
+  try {
+    await _runMain(main, { showUsage })
+  }
+  finally {
+    setRunningMain(false)
+  }
 
   if (!currentCommand || !LONG_RUNNING_COMMANDS.has(currentCommand)) {
-    warnOnHang({ action: currentCommand ? `\`nuxt ${currentCommand}\`` : 'command' })
+    warnOnHang({
+      action: currentCommand
+        ? `\`nuxt ${currentCommand}\``
+        : 'command',
+    })
   }
 }
 
@@ -66,5 +84,7 @@ export async function runCommand(
 export async function showUsage(cmd: CommandDef<any>, parent?: CommandDef<any>): Promise<void> {
   const usage = await renderUsage(cmd, parent)
   const plain = process.env.NO_COLOR || !process.stdout.hasColors?.()
-  process.stdout.write(`${plain ? stripVTControlCharacters(usage) : usage}\n\n`)
+  process.stdout.write(`${plain
+    ? stripVTControlCharacters(usage)
+    : usage}\n\n`)
 }

@@ -186,11 +186,17 @@ const command = defineCommand({
     const takeover = await beforeServing(() => takeOverServer(buildDir, {
       requestedPort: parsePort(listenOverrides.port),
       takeover: ctx.args.takeover,
+      open: listenOverrides.open,
+      openURL: listenOverrides.openURL,
     }))
     if (takeover.action === 'refused') {
       await teardownDevUI()
       logger.error(formatTakeoverRefusal(takeover.existing, takeover.reason))
       process.exit(1)
+    }
+    if (takeover.action === 'opened') {
+      await teardownDevUI()
+      process.exit(0)
     }
     if (takeover.action === 'start-anyway') {
       process.env.NUXT_IGNORE_LOCK = '1'
@@ -222,7 +228,12 @@ const command = defineCommand({
 
     // Nuxt, Nitro and Vite all print while they load, so the panel takes the
     // terminal before any of them get the chance.
-    const uiOptions = { flag: ctx.args.tui, inspect: !!inspect, cwd, startTime }
+    const uiOptions = {
+      flag: ctx.args.tui,
+      inspect: !!inspect,
+      cwd,
+      startTime,
+    }
     const session = await beginDevUI(uiOptions)
     const ui = !!session
     if (ui) {
@@ -232,7 +243,9 @@ const command = defineCommand({
 
     const { context: shortcutContext, attach: attachServer, provide } = devShortcutContext()
     provide({ clearCaches })
-    const startingUI = ui ? await setupDevUI(shortcutContext, { ...uiOptions, enabled: true }) : undefined
+    const startingUI = ui
+      ? await setupDevUI(shortcutContext, { ...uiOptions, enabled: true })
+      : undefined
     handleShutdownSignals(() => shortcutContext.close())
 
     // Evaluating the dev server's graph blocks the loop; let the panel answer
@@ -240,7 +253,13 @@ const command = defineCommand({
     await new Promise(resolve => setImmediate(resolve))
     const { initialize } = await import('../dev')
 
-    const started = await initialize({ cwd, args: ctx.args, handoverFrom: takeover.action === 'taken' ? takeover.pid : undefined }, {
+    const started = await initialize({
+      cwd,
+      args: ctx.args,
+      handoverFrom: takeover.action === 'taken'
+        ? takeover.pid
+        : undefined,
+    }, {
       data: ctx.data,
       listenOverrides,
       showBanner: !ui,
@@ -254,7 +273,7 @@ const command = defineCommand({
       throw error
     })
 
-    const { listener, close, reload, onRestart, onReady, onLoading, onEachReady, onLog, onRequests, onSpans, onRoutes, onBuilding, onReport, onReportClear, onFileChange } = started
+    const { listener, close, reload, onRestart, onReady, onLoading, onEachReady, onLog, onRequests, onSpans, onRoutes, onStack, onBuilding, onReport, onReportClear, onFileChange } = started
 
     /** Feed the dev UI from the server running in this process. */
     function attachDevUI(devUI: DevUIController): DevUIController {
@@ -267,12 +286,18 @@ const command = defineCommand({
       onReport(report => devUI.pushReport(report))
       onReportClear(id => devUI.clearReport(id))
       onRoutes(payload => devUI.setRoutes(payload))
+      onStack(payload => devUI.setStack(payload))
       return devUI
     }
 
     // Disable forking when profiling to capture all activity in one process
     if (!ctx.args.fork || profiling) {
-      attachServer({ listener, close, onReady, restart: () => reload({ type: 'shortcut' }) })
+      attachServer({
+        listener,
+        close,
+        onReady,
+        restart: () => reload({ type: 'shortcut' }),
+      })
       attachDevUI(startingUI ?? await setupDevUI(shortcutContext, { ...uiOptions, enabled: ui }))
       return {
         listener,
@@ -301,7 +326,12 @@ const command = defineCommand({
       pool.startWarming()
     })
 
-    attachServer({ listener, close: () => closeAll(), onReady, restart: () => restart({ type: 'shortcut' }) })
+    attachServer({
+      listener,
+      close: () => closeAll(),
+      onReady,
+      restart: () => restart({ type: 'shortcut' }),
+    })
     const devUI = attachDevUI(startingUI ?? await setupDevUI(shortcutContext, { ...uiOptions, enabled: ui }))
     // Whatever is serving the app right now: this process, then each fork in turn.
     let closeCurrent = close
@@ -351,7 +381,9 @@ const command = defineCommand({
       if (!handover) {
         await Promise.all([
           closeCurrent(),
-          inspect ? closeInspector() : undefined,
+          inspect
+            ? closeInspector()
+            : undefined,
         ])
       }
 
@@ -380,6 +412,9 @@ const command = defineCommand({
             }
             else if (message.type === 'nuxt:internal:dev:routes') {
               devUI.setRoutes(message.payload)
+            }
+            else if (message.type === 'nuxt:internal:dev:stack') {
+              devUI.setStack(message.payload)
             }
             else if (message.type === 'nuxt:internal:dev:building') {
               devUI.setStatus(message.building ? 'building' : 'ready')
@@ -415,7 +450,9 @@ const command = defineCommand({
       }
       catch (error) {
         await fork?.close()
-        const detail = error instanceof Error ? error.message : String(error)
+        const detail = error instanceof Error
+          ? error.message
+          : String(error)
         if (!handover) {
           // The outgoing server is already closed, so there is nothing left to
           // serve the app and no watcher left to trigger another attempt.
@@ -530,7 +567,9 @@ export function resolveListenOverrides(args: ParsedArgs<ArgsT>): DevListenOverri
       || process.env.PORT
       || undefined,
     strictPort: args.strictPort,
-    hostname: host === true || host === '' ? '' : host || undefined,
+    hostname: host === true || host === ''
+      ? ''
+      : host || undefined,
     open: args.open || !!args['open.url'],
     openURL: args['open.url'] || undefined,
     clipboard: args.clipboard,

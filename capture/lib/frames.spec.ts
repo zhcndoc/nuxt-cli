@@ -27,7 +27,10 @@ function transcript(repaint: string): string {
 
 function fingerprint(chunks: string[]): string {
   const asChunks: Chunk[] = chunks.map((data, index) => ({ at: index * 10, data }))
-  return buildFingerprint(asChunks, { rows: 24, scrubRules: ['spinner'] })
+  return buildFingerprint(asChunks, {
+    rows: 24,
+    scrubRules: ['spinner'],
+  })
 }
 
 /** Ways the operating system could have split the same output into reads. */
@@ -59,6 +62,36 @@ describe('capture fingerprint', () => {
   }
 })
 
+describe('scrubbing the log view clock', () => {
+  const muted = '\u001B[90m'
+  const reset = '\u001B[39m'
+  const log = (rows: string[]) => buildFingerprint([
+    {
+      at: 0,
+      data: rows.join('\r\n'),
+    },
+  ], {
+    rows: 24,
+    scrubRules: ['dates', 'clock'],
+  })
+
+  it('should not depend on which rows the time was printed on', () => {
+    const shown = log([`  ${muted}14:42:32${reset} Vite server built`, `  ${muted}14:42:33${reset} [nitro] built`])
+    const blank = log([`  ${muted}14:42:32${reset} Vite server built`, `${' '.repeat(11)}[nitro] built`])
+    expect(blank).toBe(shown)
+  })
+
+  it('should blank the time before an indented message', () => {
+    expect(log([`  ${muted}14:42:32${reset}   ➜ DevTools`])).toBe(log([`${' '.repeat(13)}➜ DevTools`]))
+  })
+
+  it('should keep the gutter and indentation of continuation rows', () => {
+    const lines = log([`\u001B[32m▎ \u001B[39m${muted}14:42:32${reset} selected`, `${' '.repeat(13)}continued`]).split('\n')
+    expect(lines).toContain(`▎${' '.repeat(10)}selected`)
+    expect(lines).toContain(`${' '.repeat(13)}continued`)
+  })
+})
+
 describe('scrubbing a right-aligned tag', () => {
   const TAG = 'nitro'
   const WIDTH = 96
@@ -76,7 +109,13 @@ describe('scrubbing a right-aligned tag', () => {
   }
 
   it('should put the tag in the same column however long the duration was', () => {
-    const durations = ['1085 ms', '986 ms', '9 ms', '42 ms', '1.2 s']
+    const durations = [
+      '1085 ms',
+      '986 ms',
+      '9 ms',
+      '42 ms',
+      '1.2 s',
+    ]
     const scrubbed = durations.map(scrub)
 
     for (const line of scrubbed) {
@@ -108,6 +147,12 @@ describe('scrubbing a right-aligned tag', () => {
     const result = scrubLine(line, styles, resolveRules(['timings']))
 
     expect(result.styles).toHaveLength(result.line.length)
+  })
+
+  it.each(['⠋ Setting up modules 1.2s · total 3.4s', '⠋ Setting up modules 1.2s · 3.4s', '⠋ Setting up modules 3.4s'])('should pin a phase line however the clocks differed: %s', (line) => {
+    const styles = Array.from({ length: line.length }).fill(undefined) as never
+
+    expect(scrubLine(line, styles, resolveRules(['timings'])).line).toBe('⠋ Setting up modules 42 ms')
   })
 
   it('should leave a line without padding alone', () => {

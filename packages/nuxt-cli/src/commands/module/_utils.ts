@@ -4,6 +4,7 @@ import { styleText } from 'node:util'
 import { confirm, isCancel } from '@clack/prompts'
 import { satisfies } from 'verkit'
 
+import { askQuestion } from '../../utils/console'
 import { fetchJson } from '../../utils/fetch'
 import { logger } from '../../utils/logger'
 import { relativeToProcess } from '../../utils/paths'
@@ -132,7 +133,9 @@ export function parseModuleSpec(input: string): ModuleSpec | undefined {
 /** The npm package name a config entry such as `maz-ui/nuxt` belongs to. */
 export function basePackageName(specifier: string): string {
   const parts = specifier.split('/')
-  return specifier.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0]!
+  return specifier.startsWith('@')
+    ? parts.slice(0, 2).join('/')
+    : parts[0]!
 }
 
 const NUXT_CONFIG_ENTRY_RE = /(?:^|\/)nuxt\.config\.[cm]?[jt]s$/
@@ -163,7 +166,13 @@ function resolveExportTarget(entry: Exports): string | undefined {
     return
   }
   if (entry && typeof entry === 'object') {
-    for (const key of ['nuxt', 'import', 'module', 'require', 'default'] as const) {
+    for (const key of [
+      'nuxt',
+      'import',
+      'module',
+      'require',
+      'default',
+    ] as const) {
       if (key in entry) {
         const resolved = resolveExportTarget((entry as Record<string, Exports>)[key])
         if (resolved) {
@@ -196,9 +205,11 @@ export function resolveModuleEntry(pkg: PackageJson): ModuleEntry {
     }
   }
 
-  const rootEntry = (hasSubpathExports ? resolveExportTarget(exports['.']) : resolveExportTarget(pkg.exports))
-    ?? pkg.module
-    ?? pkg.main
+  const rootEntry = (hasSubpathExports
+    ? resolveExportTarget(exports['.'])
+    : resolveExportTarget(pkg.exports))
+  ?? pkg.module
+  ?? pkg.main
 
   // A layer's entrypoint is its `nuxt.config`. Where there is no entry at all, an
   // explicitly published `nuxt.config` is the only remaining signal (a package
@@ -228,10 +239,10 @@ export async function ensureNuxtDependency(cwd: string, projectPkg: PackageJson)
 
   logger.warn(`No ${styleText('cyan', 'nuxt')} dependency detected in ${styleText('cyan', relativeToProcess(cwd))}.`)
 
-  const shouldContinue = await confirm({
+  const shouldContinue = await askQuestion(() => confirm({
     message: `Do you want to continue anyway?`,
     initialValue: false,
-  })
+  }))
 
   return !isCancel(shouldContinue) && shouldContinue === true
 }

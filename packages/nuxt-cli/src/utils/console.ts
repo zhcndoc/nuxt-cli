@@ -1,19 +1,43 @@
-import type { ConsolaOptions, ConsolaReporter } from 'consola'
+import type { ConsolaInstance, ConsolaOptions, ConsolaReporter, FormatOptions, LogObject } from 'consola'
 
 import process from 'node:process'
 import { pathToFileURL } from 'node:url'
+import { format, styleText } from 'node:util'
 
 import { consola } from 'consola'
 import { resolveModulePath } from 'exsolve'
+import { isCI } from 'std-env'
 
 import { isRemotePeerError } from './errors'
-import { debug } from './logger'
+import { debug, isEmittingCliLog, logger } from './logger'
 import { tryResolveNuxt } from './resolve-nuxt'
-import { withStartupClockPaused } from './startup-clock'
-import { isInteractiveSession, trackOutputSpacing } from './stdout'
-import { useTerminalHost } from './terminal-host'
+import { holdScreen, isScreenHeld, takeUnseenOutput } from './screen'
+import { withUserAttention } from './startup-clock'
+import { isInteractiveSession, trackOutputSpacing, writeDirect } from './stdout'
+import { MUTED } from './terminal-theme'
 
-function wrapReporter(reporter: ConsolaReporter) {
+type FormattingReporter = ConsolaReporter & {
+  formatArgs?: (args: unknown[], opts: FormatOptions) => string
+}
+
+let clackReporting = false
+
+/**
+ * Render consola logs as clack log lines, so the project's logs share the
+ * gutter the CLI draws down the side of a command's output. Only takes effect
+ * where that gutter is drawn. Returns a function that switches it off again.
+ */
+export function reportThroughClack(): () => void {
+  if (!process.stdout.isTTY || isCI) {
+    return () => {}
+  }
+  clackReporting = true
+  return () => {
+    clackReporting = false
+  }
+}
+
+export function wrapReporter(reporter: FormattingReporter): ConsolaReporter {
   return ({
     log(logObj, ctx) {
       if (!logObj.args || !logObj.args.length) {
@@ -26,9 +50,62 @@ function wrapReporter(reporter: ConsolaReporter) {
           return
         }
       }
+      if (clackReporting && !isEmittingCliLog() && logObj.type !== 'box' && logObj.type !== 'trace') {
+        const opts = { columns: process.stdout.columns || 0, ...ctx.options.formatOptions }
+        const message = reporter.formatArgs
+          ? reporter.formatArgs(logObj.args, opts)
+          : format(...logObj.args)
+        return logThroughClack(logObj, message)
+      }
       return reporter.log(logObj, ctx)
     },
   }) satisfies ConsolaReporter
+}
+
+/** Bypasses `consola.wrapStd()`, which would hand each line back to consola. */
+const directOutput = { write: writeDirect } as unknown as NodeJS.WriteStream
+
+function logThroughClack(logObj: LogObject, message: string): void {
+  message = message.replace(/`([^`\n]+)`/g, (_, code) => styleText('cyan', code))
+  if (logObj.tag) {
+    message = `${styleText(MUTED, `[${logObj.tag}]`)} ${message}`
+  }
+  const options = { output: directOutput }
+  switch (logObj.type) {
+    case 'fatal':
+    case 'error':
+    case 'fail':
+      return logger.error(message, options)
+    case 'warn':
+      return logger.warn(message, options)
+    case 'success':
+    case 'ready':
+      return logger.success(message, options)
+    case 'info':
+    case 'start':
+      return logger.info(message, options)
+    default:
+      return logger.message(message, options)
+  }
+}
+
+/** How Node opens a process warning, such as `(node:1234) DeprecationWarning: …`. */
+const PROCESS_WARNING_RE = /^\(node:\d+\) /
+
+/**
+ * Log the process warnings Node prints through `console.error` as warnings.
+ *
+ * Call before `instance` wraps the console, which is when the wrapped
+ * `console.error` is taken from it.
+ */
+export function routeProcessWarnings(instance: Pick<ConsolaInstance, 'error' | 'warn'>): void {
+  const raw = instance.error.raw
+  instance.error.raw = (...args) => {
+    if (typeof args[0] === 'string' && PROCESS_WARNING_RE.test(args[0])) {
+      return instance.warn.raw(...args)
+    }
+    return raw(...args)
+  }
 }
 
 export async function configureProjectConsola(rootDir: string): Promise<void> {
@@ -41,16 +118,19 @@ export async function configureProjectConsola(rootDir: string): Promise<void> {
     const projectConsola = mod.consola ?? mod.default
     if (projectConsola) {
       projectConsola.options.formatOptions.date = false
+      routeProcessWarnings(projectConsola)
       interceptPrompts(projectConsola)
-      // Logs from a separate instance would otherwise bypass the dev UI's reporters.
+      // Logs from a separate instance would otherwise bypass the CLI's reporters.
       if (projectConsola !== consola) {
-        projectConsola.setReporters([{
-          log(logObj, ctx) {
-            for (const reporter of consola.options.reporters) {
-              reporter.log(logObj, ctx)
-            }
+        projectConsola.setReporters([
+          {
+            log(logObj, ctx) {
+              for (const reporter of consola.options.reporters) {
+                reporter.log(logObj, ctx)
+              }
+            },
           },
-        }])
+        ])
       }
     }
   }
@@ -62,6 +142,7 @@ export async function configureProjectConsola(rootDir: string): Promise<void> {
 export function setupGlobalConsole(opts: { dev?: boolean } = {}) {
   consola.options.formatOptions.date = false
   consola.options.reporters = consola.options.reporters.map(wrapReporter)
+  routeProcessWarnings(consola)
 
   if (opts.dev) {
     trackOutputSpacing()
@@ -86,9 +167,12 @@ export function setupGlobalConsole(opts: { dev?: boolean } = {}) {
  * `Enter` arrives as a bare `\r`, which `readline` never treats as end of line,
  * so a long-lived command such as `nuxt dev` is left with dead Ctrl-C and dead
  * keyboard shortcuts.
+ *
+ * A question on screen owns the keyboard, so this does nothing while one is
+ * up: its teardown puts the mode back.
  */
 export function restoreRawMode(): void {
-  if (!process.stdin.isTTY) {
+  if (isScreenHeld() || !process.stdin.isTTY) {
     return
   }
   if (process.stdin.isPaused()) {
@@ -156,6 +240,24 @@ export async function withDirectStdout<T>(fn: () => T | Promise<T>): Promise<T> 
   }
 }
 
+/**
+ * Ask a question with the terminal to itself: nothing else paints while it is
+ * on screen, the keys typed belong to it, and raw mode is handed back before the
+ * terminal returns to its owner.
+ */
+export function askQuestion<T>(question: () => Promise<T>): Promise<T> {
+  return withUserAttention(() => withDirectStdout(async () => {
+    const release = holdScreen()
+    try {
+      return await question()
+    }
+    finally {
+      release()
+      restoreRawMode()
+    }
+  }))
+}
+
 export function printJson(value: unknown): Promise<unknown> {
   return withDirectStdout(() => process.stdout.write(`${JSON.stringify(value, null, 2)}\n`))
 }
@@ -174,9 +276,12 @@ const wrappedPrompts = new WeakSet<PromptFn>()
  * install itself, arrives long after the CLI's own prompts are done with the
  * terminal: the interactive UI is folding output away into its log view and
  * holding stdin for its shortcuts, so the question would be filed away as a
- * log and the keystroke meant for it taken as a shortcut. When a terminal
- * host is published the question is asked inside its `withTerminal`, and
- * through {@link withDirectStdout} like the CLI's own prompts either way.
+ * log and the keystroke meant for it taken as a shortcut. It is asked through
+ * {@link askQuestion}, like the CLI's own prompts.
+ *
+ * Output printed in the same turn of the event loop as a question explains
+ * what it is asking, so whatever of it was kept off the screen is shown above
+ * the question.
  *
  * Prompts are serialised, since two of them redrawing over each other can be
  * neither read nor answered.
@@ -192,10 +297,12 @@ export function interceptPrompts(instance: { options: { prompt?: PromptFn } }): 
       debug(`Not asking, with no terminal to answer on: ${message}`)
       return Promise.resolve(declinedAnswer(opts))
     }
-    const answer = promptQueue.then(() => withStartupClockPaused(() => {
-      const ask = () => withDirectStdout(() => prompt(message, opts))
-      const host = useTerminalHost()
-      return host ? host.withTerminal(ask) : ask()
+    const leadIn = trimBlankLines(takeUnseenOutput())
+    const answer = promptQueue.then(() => askQuestion(() => {
+      if (leadIn) {
+        writeDirect(`\n${leadIn}\n`)
+      }
+      return prompt(message, opts)
     }))
     promptQueue = answer.catch(() => {})
     return answer
@@ -204,9 +311,15 @@ export function interceptPrompts(instance: { options: { prompt?: PromptFn } }): 
   instance.options.prompt = wrapped
 }
 
+function trimBlankLines(text: string): string {
+  return text.replace(/^(?:[ \t]*\r?\n)+/, '').trimEnd()
+}
+
 /** What a question that could not be asked answers: whatever changes nothing. */
 function declinedAnswer(opts: Parameters<PromptFn>[1] = {}) {
-  return opts.type === 'confirm' ? false : undefined
+  return opts.type === 'confirm'
+    ? false
+    : undefined
 }
 
 function report(label: string, error: unknown) {

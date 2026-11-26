@@ -1,10 +1,12 @@
-import type { Server as HttpServer, RequestListener } from 'node:http'
-import type { AddressInfo } from 'node:net'
+import type { Server as HttpServer, IncomingHttpHeaders, IncomingMessage, RequestListener, ServerResponse } from 'node:http'
+import type { Http2SecureServer, ServerHttp2Session } from 'node:http2'
+import type { AddressInfo, Socket } from 'node:net'
 import type { HTTPSOptions, ResolvedCertificate } from './cert'
 import type { Tunnel } from './tunnel'
 
 import { spawn } from 'node:child_process'
 import { createServer as createHttpServer } from 'node:http'
+import { createSecureServer as createHttp2SecureServer } from 'node:http2'
 import { createServer as createHttpsServer } from 'node:https'
 import { networkInterfaces } from 'node:os'
 import process from 'node:process'
@@ -13,9 +15,12 @@ import { styleText } from 'node:util'
 import { getPort } from 'get-port-please'
 import { isCI } from 'std-env'
 
+import { writeClipboard } from '../utils/clipboard'
+import { hasDisplayServer } from '../utils/display'
 import { ActionableError } from '../utils/errors'
 import { debug, logger } from '../utils/logger'
 import { detectIsolatedEnvironment, isWsl } from './environment'
+import { isLoopbackAddress } from './host-check'
 import { resolvePortlessURLs } from './portless'
 import { resolveStackblitzURL } from './stackblitz'
 
@@ -42,6 +47,11 @@ export interface ListenOptions {
   public?: boolean
   publicURL?: string
   https?: boolean | HTTPSOptions
+  /**
+   * Serve `https` over HTTP/2, with HTTP/1.1 for clients that do not negotiate it.
+   * @default true
+   */
+  http2?: boolean
 }
 
 export interface ListenURL {
@@ -64,7 +74,7 @@ export interface Listener {
   /** URL the startup QR code was (or would have been) rendered for. */
   qrURL?: string
   address: AddressInfo
-  server: HttpServer
+  server: HttpServer | Http2SecureServer
   https: false | ResolvedCertificate
   close: () => Promise<void>
   getURLs: () => ListenURL[]
@@ -73,7 +83,6 @@ export interface Listener {
 }
 
 const ANY_HOSTS = new Set(['', '0.0.0.0', '::'])
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1'])
 const DEFAULT_PORTS = { http: 80, https: 443 } as const
 
 /** How long in-flight requests have to finish before their sockets are killed. */
@@ -85,8 +94,12 @@ const CONNECTION_DRAIN_TIMEOUT_MS = 1000
  * readable. A malformed sequence is left as-is rather than throwing.
  */
 export function formatDisplayURL(protocol: 'http' | 'https', host: string, port: number, baseURL: string): string {
-  const hostname = host.includes(':') ? `[${host}]` : host
-  const suffix = port === DEFAULT_PORTS[protocol] ? '' : `:${port}`
+  const hostname = host.includes(':')
+    ? `[${host}]`
+    : host
+  const suffix = port === DEFAULT_PORTS[protocol]
+    ? ''
+    : `:${port}`
   const url = `${protocol}://${hostname}${suffix}${baseURL}`
   try {
     return decodeURI(url)
@@ -119,7 +132,9 @@ export function validateHostname(hostname: string | undefined, isPublic?: boolea
 /** Hostname `bindListener` will bind for `options`. */
 function resolveBindHostname(options: ListenOptions, silent = false): string {
   const isolated = options.hostname === undefined && !options.public && detectIsolatedEnvironment()
-  return validateHostname(options.hostname, options.public, { silent }) ?? (options.public || isolated ? '' : 'localhost')
+  return validateHostname(options.hostname, options.public, { silent }) ?? (options.public || isolated
+    ? ''
+    : 'localhost')
 }
 
 /**
@@ -135,7 +150,9 @@ export function matchesBoundTarget(bound: BoundServer, options: ListenOptions): 
   }
   // Parsed leniently: an unusable port cannot match, and reporting that is
   // `bindListener`'s job rather than this comparison's.
-  const port = options.port === undefined || options.port === '' ? undefined : Number(options.port)
+  const port = options.port === undefined || options.port === ''
+    ? undefined
+    : Number(options.port)
   return port === undefined || port === bound.address.port || port === bound.requestedPort
 }
 
@@ -179,9 +196,11 @@ function isNetworkBaseAddress(address: string, cidr: string | null | undefined):
  * into the legacy provider, which Node does not load, so such keystores fail
  * with `ERR_CRYPTO_UNSUPPORTED_OPERATION`.
  */
-function createSecureServer(certificate: ResolvedCertificate, handler: RequestListener): HttpServer {
+function createSecureServer(certificate: ResolvedCertificate, handler: RequestListener, http2: boolean): HttpServer | Http2SecureServer {
   try {
-    return createHttpsServer(certificate, handler)
+    return http2
+      ? createHttp2Server(certificate, handler)
+      : createHttpsServer(certificate, handler)
   }
   catch (error) {
     if (certificate.pfx && (error as NodeJS.ErrnoException)?.code === 'ERR_CRYPTO_UNSUPPORTED_OPERATION') {
@@ -197,9 +216,70 @@ function createSecureServer(certificate: ResolvedCertificate, handler: RequestLi
   }
 }
 
+interface Http2Connections {
+  sessions: Set<ServerHttp2Session>
+  sockets: Set<Socket>
+}
+
+/** Open sessions and sockets of each HTTP/2 server, which Node does not expose. */
+const http2Connections = new WeakMap<HttpServer | Http2SecureServer, Http2Connections>()
+
+function createHttp2Server(certificate: ResolvedCertificate, handler: RequestListener): Http2SecureServer {
+  const server = createHttp2SecureServer({
+    // A page in development requests hundreds of modules at once, which
+    // exceeds Node's default session memory (`ENHANCE_YOUR_CALM`) and stream
+    // reset limits (`ERR_HTTP2_PROTOCOL_ERROR`).
+    maxSessionMemory: 1000,
+    streamResetBurst: 100_000,
+    streamResetRate: 33,
+    ...certificate,
+    allowHTTP1: true,
+  }, (request, response) => {
+    const req = request as unknown as IncomingMessage
+    if (req.httpVersionMajor >= 2) {
+      hidePseudoHeaders(req)
+    }
+    handler(req, response as unknown as ServerResponse)
+  })
+
+  const sessions = new Set<ServerHttp2Session>()
+  const sockets = new Set<Socket>()
+  server.on('session', (session) => {
+    sessions.add(session)
+    session.once('close', () => sessions.delete(session))
+  })
+  server.on('connection', (socket: Socket) => {
+    sockets.add(socket)
+    socket.once('close', () => sockets.delete(socket))
+  })
+  http2Connections.set(server, { sessions, sockets })
+
+  return server
+}
+
+/**
+ * HTTP/2 requests list `:method`, `:path`, `:scheme` and `:authority` among
+ * their headers. These are not valid header names for `Headers` or for an
+ * HTTP/1.1 request, so they are left out of `req.headers`, with `:authority`
+ * provided as `host`.
+ */
+function hidePseudoHeaders(req: IncomingMessage): void {
+  const headers: IncomingHttpHeaders = Object.create(null)
+  for (const name in req.headers) {
+    if (!name.startsWith(':')) {
+      headers[name] = req.headers[name]
+    }
+  }
+  const authority = req.headers[':authority']
+  if (typeof authority === 'string') {
+    headers.host = authority
+  }
+  Object.defineProperty(req, 'headers', { value: headers, configurable: true, writable: true })
+}
+
 /** A bound socket, before any URL resolution, tunnel or console output. */
 export interface BoundServer {
-  server: HttpServer
+  server: HttpServer | Http2SecureServer
   address: AddressInfo
   https: false | ResolvedCertificate
   hostname: string
@@ -219,14 +299,16 @@ export async function bindListener(handler: RequestListener, options: ListenOpti
     ? requestedPort
     : await resolvePort(requestedPort, hostname, options.strictPort)
 
-  const httpsOptions = options.https === true ? {} : options.https
+  const httpsOptions = options.https === true
+    ? {}
+    : options.https
   // `cert` and `tunnel` reach `dev/binaries.ts`, which pulls in `rc9` and the
   // clack spinner. Neither is wanted unless `--https` or `--tunnel` is passed.
   const certificate = httpsOptions
     ? await import('./cert').then(({ resolveCertificate }) => resolveCertificate(httpsOptions))
     : false
   const server = certificate
-    ? createSecureServer(certificate, handler)
+    ? createSecureServer(certificate, handler, options.http2 !== false)
     : createHttpServer(handler)
 
   await bindServer(server, port, hostname, !!options.reusePort).catch((error) => {
@@ -236,7 +318,13 @@ export async function bindListener(handler: RequestListener, options: ListenOpti
   // takes the whole dev process down.
   server.on('error', error => logger.error(`Dev server error: ${error.message}`))
 
-  return { server, address: server.address() as AddressInfo, https: certificate, hostname, requestedPort }
+  return {
+    server,
+    address: server.address() as AddressInfo,
+    https: certificate,
+    hostname,
+    requestedPort,
+  }
 }
 
 /**
@@ -289,9 +377,15 @@ export async function createListener(bound: BoundServer, options: ListenOptions 
         urls.push({ url: stackblitzURL, type: 'public' })
       }
       if (anyHost) {
-        urls.push({ url: formatURL('localhost'), type: 'local' })
+        urls.push({
+          url: formatURL('localhost'),
+          type: 'local',
+        })
         for (const address of getNetworkAddresses()) {
-          urls.push({ url: formatURL(address), type: 'network' })
+          urls.push({
+            url: formatURL(address),
+            type: 'network',
+          })
         }
       }
       else {
@@ -313,19 +407,32 @@ export async function createListener(bound: BoundServer, options: ListenOptions 
 
     function showURLs({ qr = false }: { qr?: boolean } = {}): void {
       const urls = getURLs()
-      const labels = { local: 'Local:', network: 'Network:', tunnel: 'Tunnel:', public: 'Public:' } as const
-      const labelColors = { local: 'green', network: 'magenta', tunnel: 'cyan', public: 'magenta' } as const
+      const labels = {
+        local: 'Local:',
+        network: 'Network:',
+        tunnel: 'Tunnel:',
+        public: 'Public:',
+      } as const
+      const labelColors = {
+        local: 'green',
+        network: 'magenta',
+        tunnel: 'cyan',
+        public: 'magenta',
+      } as const
       const lines: string[] = []
       const line = (color: (text: string) => string, label: string, value: string, isQR: boolean) =>
-        `  ${color('➜')} ${styleText('bold', color(label.padEnd(10)))}${value}${isQR ? styleText('gray', ' [QR code]') : ''}`
+        `  ${color('➜')} ${styleText('bold', color(label.padEnd(10)))}${value}${isQR
+          ? styleText('gray', ' [QR code]')
+          : ''}`
       for (const { url: displayURL, type } of urls) {
         lines.push(line(text => styleText(labelColors[type], text), labels[type], styleText('cyan', displayURL), qr && displayURL === qrURL))
       }
-      if (!anyHost && !tunnel && !portless.url && !stackblitzURL) {
-        const isolated = LOOPBACK_HOSTS.has(hostname) ? detectIsolatedEnvironment() : undefined
+      if (isLoopbackAddress(address.address) && !tunnel && !portless.url && !stackblitzURL) {
+        const isolated = detectIsolatedEnvironment()
+        const flag = styleText('cyan', '--host')
         const hint = isolated
-          ? `use ${styleText('white', '--host')} to reach this server from outside ${isolated}`
-          : `use ${styleText('white', '--host')} to expose`
+          ? `use ${flag} to reach this server from outside ${isolated}`
+          : `use ${flag} to expose`
         lines.push(line(text => styleText('magenta', text), 'Network:', styleText('gray', hint), false))
       }
       if (publicURL && publicURL !== url && !urls.some(entry => entry.url === publicURL)) {
@@ -335,7 +442,7 @@ export async function createListener(bound: BoundServer, options: ListenOptions 
       console.log(`${qr ? '' : '\n'}${lines.join('\n')}\n`)
     }
 
-    if (announce && (anyHost || !LOOPBACK_HOSTS.has(hostname))) {
+    if (announce && !isLoopbackAddress(address.address)) {
       logger.warn('The dev server is reachable from the network without authentication: anyone who can connect can read the app, build errors and source code.')
     }
 
@@ -353,7 +460,9 @@ export async function createListener(bound: BoundServer, options: ListenOptions 
       }
 
       if (options.open) {
-        openBrowser(options.openURL ? resolveOpenURL(options.openURL, url) : url)
+        openBrowser(options.openURL
+          ? resolveOpenURL(options.openURL, url)
+          : url)
       }
     }
 
@@ -386,7 +495,7 @@ export async function listen(handler: RequestListener, options: ListenOptions = 
   }
 }
 
-function closeServer(server: HttpServer): Promise<void> {
+function closeServer(server: HttpServer | Http2SecureServer): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     let forceClose: NodeJS.Timeout | undefined
     server.close((error) => {
@@ -400,15 +509,27 @@ function closeServer(server: HttpServer): Promise<void> {
         resolve()
       }
     })
-    // Sockets waiting on keep-alive are closed at once, so shutdown is only
-    // delayed while a request is actually being served.
-    server.closeIdleConnections?.()
-    forceClose = setTimeout(() => server.closeAllConnections?.(), CONNECTION_DRAIN_TIMEOUT_MS)
+    // Sockets waiting on keep-alive and HTTP/2 sessions without open streams
+    // are closed at once, so shutdown is only delayed while a request is
+    // actually being served.
+    const http2 = http2Connections.get(server)
+    if (http2) {
+      // `close()` has closed the idle HTTP/1.1 sockets of an HTTP/2 server.
+      for (const session of http2.sessions) {
+        session.close()
+      }
+      forceClose = setTimeout(() => http2.sockets.forEach(socket => socket.destroy()), CONNECTION_DRAIN_TIMEOUT_MS)
+    }
+    else {
+      const http1 = server as HttpServer
+      http1.closeIdleConnections?.()
+      forceClose = setTimeout(() => http1.closeAllConnections?.(), CONNECTION_DRAIN_TIMEOUT_MS)
+    }
     forceClose.unref()
   })
 }
 
-function bindServer(server: HttpServer, port: number, hostname: string, reusePort: boolean): Promise<void> {
+function bindServer(server: HttpServer | Http2SecureServer, port: number, hostname: string, reusePort: boolean): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const onError = (error: NodeJS.ErrnoException) => {
       if (reusePort && isUnsupportedOptionError(error)) {
@@ -420,7 +541,12 @@ function bindServer(server: HttpServer, port: number, hostname: string, reusePor
     }
     server.once('error', onError)
     try {
-      server.listen({ port, host: hostname || undefined, reusePort, exclusive: !reusePort }, () => {
+      server.listen({
+        port,
+        host: hostname || undefined,
+        reusePort,
+        exclusive: !reusePort,
+      }, () => {
         server.removeListener('error', onError)
         resolve()
       })
@@ -542,25 +668,11 @@ function isQRCodeVisible(): boolean {
 
 export async function printQRCode(url: string, { showURL = false }: { showURL?: boolean } = {}): Promise<void> {
   const { renderUnicodeCompact } = await import('uqr')
-  const caption = showURL ? `\n${centerBlock(styleText('cyan', url), url.length)}` : ''
+  const caption = showURL
+    ? `\n${centerBlock(styleText('cyan', url), url.length)}`
+    : ''
   // eslint-disable-next-line no-console
   console.log(`\n${centerBlock(renderUnicodeCompact(url))}${caption}\n`)
-}
-
-/** Write `text` to the system clipboard, resolving whether it succeeded. */
-export async function writeClipboard(text: string): Promise<boolean> {
-  if (!hasDisplayServer()) {
-    return false
-  }
-  try {
-    const { writeText } = await import('tinyclip')
-    await writeText(text)
-    return true
-  }
-  catch (error) {
-    debug('Failed to write to the clipboard:', error)
-    return false
-  }
 }
 
 export async function copyURL(url: string): Promise<void> {
@@ -570,21 +682,6 @@ export async function copyURL(url: string): Promise<void> {
   else {
     logger.warn('No clipboard is available in this environment.')
   }
-}
-
-const DISPLAY_REQUIRED_PLATFORMS = new Set<NodeJS.Platform>(['linux', 'freebsd', 'openbsd'])
-
-/**
- * Whether a graphical session exists to receive a clipboard write or a browser
- * launch. The tools involved on Linux and BSD (`wl-copy`, `xsel`, `xclip`,
- * `xdg-open`) all need one, and fail in unhelpful ways without it: clipboard
- * tools exit before reading their input, so the write fails with `EPIPE`.
- */
-function hasDisplayServer(env: NodeJS.ProcessEnv = process.env): boolean {
-  if (!DISPLAY_REQUIRED_PLATFORMS.has(process.platform)) {
-    return true
-  }
-  return !!(env.WSL_DISTRO_NAME || env.WAYLAND_DISPLAY || env.DISPLAY)
 }
 
 function centerBlock(block: string, blockWidth?: number): string {
@@ -605,7 +702,13 @@ export function resolveOpenURL(target: string, baseURL: string): string {
   }
 }
 
-const DEFAULT_LAUNCHERS = new Set(['open', 'xdg-open', 'start', 'cmd', 'cmd.exe'])
+const DEFAULT_LAUNCHERS = new Set([
+  'open',
+  'xdg-open',
+  'start',
+  'cmd',
+  'cmd.exe',
+])
 
 /**
  * Resolve the command that opens `url`, honouring the de facto `BROWSER` and
@@ -627,58 +730,107 @@ export function resolveOpenCommand(
   if (browser && !DEFAULT_LAUNCHERS.has(browser)) {
     const browserArgs = env.BROWSER_ARGS?.trim().split(/\s+/).filter(Boolean) ?? []
     return platform === 'darwin' && !browser.includes('/')
-      ? ['open', ['-a', browser, url, ...(browserArgs.length > 0 ? ['--args', ...browserArgs] : [])]]
-      : [browser, [...browserArgs, url]]
+      ? [
+          'open',
+          [
+            '-a',
+            browser,
+            url,
+            ...(browserArgs.length > 0
+              ? ['--args', ...browserArgs]
+              : []),
+          ],
+        ]
+      : [
+          browser,
+          [...browserArgs, url],
+        ]
   }
 
   if (platform === 'darwin') {
-    return ['open', [url]]
+    return [
+      'open',
+      [url],
+    ]
   }
   // `cmd /c start` owns the arcane quoting rules; `""` is a dummy window title
   // (otherwise `start` treats a quoted URL as one), and `&`/`^` need escaping.
   // WSL reports itself as Linux but has no X server, so `xdg-open` fails there;
   // `cmd.exe` opens the browser on the Windows side instead.
   if (platform === 'win32' || isWsl(platform, env)) {
-    return ['cmd.exe', ['/c', 'start', '""', url.replace(/[&^]/g, '^$&')]]
+    return [
+      'cmd.exe',
+      [
+        '/c',
+        'start',
+        '""',
+        url.replace(/[&^]/g, '^$&'),
+      ],
+    ]
   }
-  return ['xdg-open', [url]]
+  return [
+    'xdg-open',
+    [url],
+  ]
 }
 
 /** How long a launcher has to fail before we assume the browser did open. */
 const BROWSER_LAUNCH_TIMEOUT_MS = 3000
 
-export function openBrowser(url: string): void {
+/** Whether {@link openBrowser} has a browser to launch in this environment. */
+export function canOpenBrowser(): boolean {
+  const resolved = resolveOpenCommand('')
+  return !!resolved && (resolved[0] !== 'xdg-open' || hasDisplayServer())
+}
+
+/**
+ * Open `url` in a browser. The returned promise resolves once the launcher has
+ * exited or had time to fail, after any failure has been reported.
+ */
+export function openBrowser(url: string): Promise<void> {
   const resolved = resolveOpenCommand(url)
   if (!resolved) {
-    return
+    return Promise.resolve()
   }
   const [command, args] = resolved
   if (command === 'xdg-open' && !hasDisplayServer()) {
     logger.warn(`No browser is available in this environment. Open ${styleText('cyan', url)} manually.`)
-    return
+    return Promise.resolve()
   }
 
-  const onFailure = (error: unknown) => {
-    debug('Failed to open browser:', error)
-    logger.warn(`Could not open ${styleText('cyan', url)} in a browser.`)
-  }
-
-  try {
-    const child = spawn(command, args, { stdio: 'ignore', detached: true })
-    child.once('error', onFailure)
-    const onExit = (code: number | null) => {
-      if (code) {
-        onFailure(new Error(`\`${command}\` exited with code ${code}`))
-      }
+  return new Promise((resolve) => {
+    const onFailure = (error: unknown) => {
+      debug('Failed to open browser:', error)
+      logger.warn(`Could not open ${styleText('cyan', url)} in a browser.`)
+      resolve()
     }
-    child.once('exit', onExit)
-    // `BROWSER` may point at the browser itself rather than a launcher, in which
-    // case the process lives as long as the browser does and its eventual exit
-    // code says nothing about whether the URL opened.
-    setTimeout(() => child.off('exit', onExit), BROWSER_LAUNCH_TIMEOUT_MS).unref()
-    child.unref()
-  }
-  catch (error) {
-    onFailure(error)
-  }
+
+    try {
+      const isWindowsLauncher = process.platform === 'win32' && command === 'cmd.exe'
+      const child = spawn(command, args, { stdio: 'ignore', detached: !isWindowsLauncher, windowsHide: isWindowsLauncher })
+      const onExit = (code: number | null) => {
+        if (code) {
+          onFailure(new Error(`\`${command}\` exited with code ${code}`))
+        }
+        settle()
+      }
+      function settle() {
+        child.off('exit', onExit)
+        child.unref()
+        resolve()
+      }
+      child.once('error', (error) => {
+        onFailure(error)
+        settle()
+      })
+      child.once('exit', onExit)
+      // `BROWSER` may point at the browser itself rather than a launcher, in which
+      // case the process lives as long as the browser does and its eventual exit
+      // code says nothing about whether the URL opened.
+      setTimeout(settle, BROWSER_LAUNCH_TIMEOUT_MS).unref()
+    }
+    catch (error) {
+      onFailure(error)
+    }
+  })
 }
